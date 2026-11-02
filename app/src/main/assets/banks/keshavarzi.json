@@ -1,0 +1,15 @@
+{
+  "bank": "keshavarzi", "name": "بانک کشاورزی", "unit": "RIAL",
+  "detect": { "senders": ["KESHAVARZI"], "signature": "bki\\.\\s?ir" },
+  "kinds": [
+    { "pattern": "^واریز", "type": "INCOME" },
+    { "pattern": "^برداشت", "type": "EXPENSE" }
+  ],
+  "fields": {
+    "amount": "^(?:برداشت|واریز)[^\\d\\n]*(\\d+)",
+    "balance": "^مانده\\s*(\\d+)",
+    "datetime": { "pattern": "^(\\d{2})(\\d{2})(\\d{2})-(\\d{2}):(\\d{2})$", "order": "yMdHm", "yearBase": 1400 },
+    "card4": "کارت\\s*(\\d{4})\\*",
+    "account": "^(\\d{6,})$"
+  }
+}

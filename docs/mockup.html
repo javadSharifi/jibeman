@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>جیب من — ماکاپ</title>
+<link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
+<style>
+:root{--bg:#05060D;--sheet:#0D1230;--surface:#131936;--surface2:#1C2347;--line:rgba(255,255,255,.07);--primary:#3880F2;--primaryStrong:#2F6FDC;--sky:#6A9EFA;--lime:#E8FCB4;--onLime:#14265C;--t2:rgba(255,255,255,.74);--muted:#8C94B8;--ok:#7BE3B0;--warn:#FFC977;--bad:#FF8A9A}
+*{box-sizing:border-box;margin:0;padding:0}
+.wrap{font-family:Vazirmatn,Tahoma,sans-serif;display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:26px 16px;justify-items:center;padding:6px 0}
+.cap{font:500 13px Vazirmatn,sans-serif;text-align:center;margin-top:10px;opacity:.7}
+.ph{width:340px;height:720px;border-radius:42px;border:7px solid #1A1B21;background:var(--bg);color:#fff;position:relative;overflow:hidden;font-family:Vazirmatn,Tahoma,sans-serif;box-shadow:0 24px 48px rgba(0,0,0,.35)}
+.glow{background:radial-gradient(110% 32% at 50% 0%,rgba(56,128,242,.22),transparent 70%),var(--bg)}
+.ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.ic.s{width:15px;height:15px}.ic.l{width:24px;height:24px}
+.num{direction:ltr;unicode-bidi:isolate;display:inline-block}
+.row{display:flex;align-items:center;gap:10px}.sp{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sb{height:30px;display:flex;justify-content:space-between;align-items:center;padding:0 22px;font-size:12px;font-weight:600;position:relative;z-index:2}
+.sb .si{display:flex;gap:5px;align-items:center}.sb .si svg{width:15px;height:15px;fill:#fff;stroke:none}
+.cam{position:absolute;top:9px;left:50%;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#000;box-shadow:0 0 0 2px #111216;z-index:6}
+.gest{position:absolute;bottom:6px;left:50%;width:108px;margin-left:-54px;height:4px;border-radius:2px;background:rgba(255,255,255,.5);z-index:7}
+.hero{padding:0 16px 18px;background:radial-gradient(140% 78% at 50% -6%,#90B8FF 0%,#4A84EE 30%,#1B3883 58%,rgba(5,6,13,0) 86%),var(--bg)}
+.av{width:40px;height:40px;border-radius:14px;background:var(--lime);color:var(--onLime);display:grid;place-items:center;font-weight:800;font-size:16px;flex:none}
+.hi{font-size:15px;font-weight:700}.sub{font-size:11px;color:var(--t2);margin-top:1px}
+.cb{width:40px;height:40px;border-radius:14px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.15);display:grid;place-items:center;color:#fff;position:relative;flex:none}
+.cb.d{background:var(--surface);border-color:var(--line)}
+.dot{position:absolute;top:9px;left:10px;width:8px;height:8px;border-radius:50%;background:var(--lime);box-shadow:0 0 0 2px #4a7fe6}
+.lbl{margin-top:16px;font-size:12px;color:var(--t2)}
+.bal{display:flex;align-items:baseline;gap:6px;margin-top:2px}.bal .num{font-size:34px;font-weight:800;letter-spacing:-.5px}
+.unit{font-size:14px;color:rgba(255,255,255,.55);font-weight:500}
+.delta{display:inline-flex;align-items:center;gap:5px;margin-top:8px;height:24px;padding:0 10px;border-radius:12px;background:rgba(232,252,180,.14);color:var(--lime);font-size:11px;font-weight:600}
+.acts{display:flex;gap:8px;margin-top:16px}
+.pill{flex:1;white-space:nowrap;height:48px;border-radius:24px;background:var(--primaryStrong);display:flex;align-items:center;gap:10px;padding:0 7px;font-size:14px;font-weight:700;box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+.pi{width:34px;height:34px;border-radius:50%;background:var(--lime);color:var(--onLime);display:grid;place-items:center}.pi .ic{stroke-width:2.2}
+.sq{flex:0 0 48px;height:48px;border-radius:17px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.14);display:grid;place-items:center}
+.sh{display:flex;justify-content:space-between;align-items:center;margin:2px 16px 10px;font-size:14px;font-weight:700}
+.sh a{font-size:12px;color:var(--sky);font-weight:500;display:flex;align-items:center;gap:1px}
+.car{display:flex;gap:10px;padding:0 16px;overflow:hidden}
+.bc{flex:0 0 142px;height:134px;border-radius:20px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;border:1px solid rgba(255,255,255,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 10px 24px rgba(8,28,90,.35);text-shadow:0 1px 2px rgba(10,30,80,.25)}
+.a1{background:radial-gradient(70% 60% at 15% 0%,rgba(255,255,255,.62),transparent 70%),conic-gradient(from 205deg at 78% 118%,transparent 0deg 8deg,rgba(255,255,255,.3) 18deg,transparent 30deg 44deg,rgba(255,255,255,.22) 56deg,transparent 70deg),linear-gradient(155deg,#A9D6F2 0%,#4A91E4 46%,#2453B8 100%)}
+.a2{background:radial-gradient(70% 60% at 85% 0%,rgba(255,255,255,.6),transparent 70%),conic-gradient(from 150deg at 20% 120%,transparent 0deg 8deg,rgba(255,255,255,.28) 18deg,transparent 30deg 44deg,rgba(255,255,255,.2) 56deg,transparent 70deg),linear-gradient(155deg,#B6CDFF 0%,#5A8CF2 46%,#2A55C6 100%)}
+.a3{background:radial-gradient(70% 60% at 30% 0%,rgba(255,255,255,.55),transparent 70%),linear-gradient(155deg,#CACCFF 0%,#727AEC 48%,#3A3FAE 100%)}
+.mono{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:14px;font-weight:800;background:rgba(255,255,255,.92);text-shadow:none;flex:none}
+.mono.k{color:#1C7A4B}.mono.b{color:#1F5FD6}.mono.c{color:#3A3FAE}.mono.sm{width:26px;height:26px;border-radius:9px;font-size:12px}
+.tagw{font-size:10px;padding:2px 8px;border-radius:8px;background:rgba(255,255,255,.22);text-shadow:none}
+.bn{font-size:12px;opacity:.92}.bv{font-size:17px;font-weight:800;margin-top:1px}.bf{font-size:10px;opacity:.88}
+.gl{margin:14px 16px 0;border-radius:24px;padding:14px 16px;overflow:hidden;border:1px solid rgba(255,255,255,.22);background:radial-gradient(80% 120% at 8% 125%,rgba(255,255,255,.5),transparent 55%),conic-gradient(from 160deg at 28% 135%,transparent 0deg 10deg,rgba(255,255,255,.22) 22deg,transparent 34deg 50deg,rgba(255,255,255,.16) 62deg,transparent 76deg),linear-gradient(135deg,#7FA8FA 0%,#3C70DE 50%,#1D3F9C 100%)}
+.gt{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600}
+.go{width:32px;height:32px;border-radius:50%;background:#fff;color:var(--onLime);display:grid;place-items:center}
+.gn{font-size:34px;font-weight:800;line-height:1.15}.gu{font-size:14px;font-weight:600}.gs{font-size:11px;opacity:.9}
+.segs{display:flex;gap:3px;margin-top:10px}.segs i{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.25)}.segs i.f{background:var(--lime)}.segs i.c{background:#fff}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 16px 0}
+.tl{border-radius:20px;padding:12px 14px;background:var(--surface);border:1px solid var(--line);min-height:104px}
+.tl.blue{background:linear-gradient(160deg,#3B7DF0,#2A62D4);border-color:rgba(255,255,255,.12)}
+.tt{font-size:12px;color:var(--t2)}.ta{width:26px;height:26px;border-radius:50%;background:#fff;color:var(--onLime);display:grid;place-items:center}.ta .ic{width:14px;height:14px;stroke-width:2.2}
+.tv{font-size:22px;font-weight:800;margin-top:10px}.tv small{font-size:12px;font-weight:500;color:var(--t2)}
+.ts{font-size:10.5px;color:var(--t2);margin-top:2px}
+.bar{height:5px;border-radius:3px;background:rgba(255,255,255,.1);margin-top:9px;overflow:hidden}.bar span{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--lime),var(--primary) 40%)}
+.pct{display:inline-block;margin-top:6px;font-size:10px;font-weight:700;padding:0 6px;border-radius:6px;background:var(--primaryStrong)}
+.fade{position:absolute;left:0;right:0;bottom:0;height:140px;background:linear-gradient(180deg,rgba(5,6,13,0),rgba(5,6,13,.94) 55%,var(--bg));z-index:3}
+.dock{position:absolute;left:12px;right:12px;bottom:18px;height:64px;border-radius:24px;background:#11162F;border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-around;padding:0 4px;z-index:4;box-shadow:0 12px 30px rgba(0,0,0,.55)}
+.it{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;color:var(--muted);width:58px}
+.ind{height:28px;width:50px;border-radius:14px;display:grid;place-items:center}
+.it.on{color:#fff;font-weight:600}.it.on .ind{background:rgba(106,158,250,.18);color:var(--sky)}
+.fab{width:54px;height:54px;border-radius:19px;background:var(--lime);color:var(--onLime);display:grid;place-items:center;margin-top:-34px;box-shadow:0 10px 22px rgba(232,252,180,.2),0 0 0 6px var(--bg)}.fab .ic{stroke-width:2.4}
+.tb{display:flex;align-items:center;justify-content:space-between;margin-top:4px}.tbt{font-size:16px;font-weight:700}
+.title{font-size:22px;font-weight:800}
+.grp{margin:0 16px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:2px 12px}
+.tx{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}.tx:last-child{border-bottom:0}
+.ti{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;flex:none}
+.c-sky{background:rgba(106,158,250,.14);color:#8DB6FF}.c-food{background:rgba(255,178,122,.13);color:#FFB27A}.c-shop{background:rgba(245,154,200,.13);color:#F59AC8}.c-ok{background:rgba(123,227,176,.13);color:var(--ok)}.c-lime{background:rgba(232,252,180,.11);color:var(--lime)}.c-vio{background:rgba(169,155,255,.14);color:#B9AEFF}.c-warn{background:rgba(255,201,119,.12);color:var(--warn)}.c-bad{background:rgba(255,138,154,.12);color:var(--bad)}
+.tm{flex:1;min-width:0}.tn{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tsub{font-size:11px;color:var(--muted);margin-top:1px}
+.tamt{display:flex;flex-direction:column;align-items:flex-end}.tamt .num{font-size:13.5px;font-weight:700}
+.src{font-size:9.5px;padding:1px 6px;border-radius:6px;margin-top:3px;background:rgba(255,255,255,.06);color:var(--muted)}.src.sms{background:rgba(232,252,180,.11);color:var(--lime)}
+.in{color:var(--ok)}.tr{color:var(--sky)}.wc{color:var(--warn)}
+.dh{display:flex;justify-content:space-between;margin:14px 22px 8px;font-size:12px;color:var(--muted)}
+.search{height:44px;border-radius:15px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 12px;color:var(--muted);font-size:13px;margin:12px 16px 0}
+.chips{display:flex;gap:6px;margin:10px 16px 0;overflow:hidden}
+.chip{flex:none;height:32px;border-radius:16px;padding:0 13px;font-size:12px;display:flex;align-items:center;gap:3px;background:var(--surface);color:var(--t2);border:1px solid var(--line)}
+.chip.on{background:var(--lime);color:var(--onLime);font-weight:700;border-color:transparent}
+.mc{margin:12px 16px 0;border-radius:20px;padding:12px 14px;background:linear-gradient(135deg,#1B2A68,#131936 70%);border:1px solid var(--line)}
+.mcl{font-size:11px;color:var(--muted)}.mcv{font-size:15px;font-weight:700}.mca{display:flex;flex-direction:column;align-items:flex-end;font-size:13px;font-weight:700;gap:1px}
+.split{display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:10px;background:rgba(255,255,255,.8);gap:2px}.split span{background:var(--ok);border-radius:3px}
+.big{margin-top:14px;height:196px;border-radius:26px;padding:16px 18px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;border:1px solid rgba(255,255,255,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 18px 36px rgba(8,25,80,.5);text-shadow:0 1px 2px rgba(10,30,80,.25)}
+.pan{font-size:18px;letter-spacing:2.5px;font-weight:600}
+.bl{font-size:11px;opacity:.88}.bb{white-space:nowrap;font-size:22px;font-weight:800}.bb small{font-size:12px;font-weight:500;opacity:.85}
+.sync{white-space:nowrap;display:flex;align-items:center;gap:4px;font-size:10.5px;background:rgba(255,255,255,.2);padding:4px 9px;border-radius:10px;text-shadow:none}
+.pdots{display:flex;gap:5px;justify-content:center;margin-top:12px}.pdots i{width:6px;height:6px;border-radius:3px;background:rgba(255,255,255,.28)}.pdots i.on{width:18px;background:#fff}
+.ctl{display:flex;justify-content:space-between;margin:16px 18px 0;font-size:11px;color:var(--t2);text-align:center}.ctl>div{display:flex;flex-direction:column;align-items:center;gap:7px;width:66px}
+.cc{width:52px;height:52px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 6px 16px rgba(56,128,242,.3)}
+.scrim{position:absolute;inset:0;background:rgba(3,4,10,.66);z-index:3}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:58px;background:var(--sheet);border-radius:28px 28px 0 0;border-top:1px solid rgba(255,255,255,.1);padding:8px 16px 0;z-index:4}
+.hdl{width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,.25);margin:0 auto 12px}
+.seg{display:flex;background:var(--surface);border-radius:15px;padding:4px;gap:4px}.seg span{flex:1;height:36px;border-radius:11px;display:grid;place-items:center;font-size:13px;color:var(--t2);font-weight:600}.seg .on{background:var(--lime);color:var(--onLime)}
+.amt{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px}.amt .num{font-size:40px;font-weight:800;letter-spacing:-.5px;line-height:1.1}
+.caret{width:2px;height:34px;background:var(--lime);border-radius:1px}
+.words{text-align:center;font-size:12px;color:var(--muted);margin-top:4px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.fld{height:46px;border-radius:15px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 10px;font-size:12.5px;font-weight:600}.fld .end{margin-inline-start:auto;color:var(--muted)}
+.cats{display:flex;justify-content:space-between;margin-top:14px}.cat{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10.5px;color:var(--t2);width:56px}
+.cat .ti{width:48px;height:48px;border-radius:16px}.cat.on .ti{box-shadow:0 0 0 2px var(--lime)}.cat.on{color:#fff;font-weight:700}
+.note{height:42px;border-radius:14px;border:1px dashed rgba(255,255,255,.16);display:flex;align-items:center;gap:8px;padding:0 12px;font-size:12px;color:var(--muted);margin-top:14px}.note .end{margin-inline-start:auto}
+.kp{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;margin-top:8px}.kp span{height:44px;display:grid;place-items:center;font-size:22px;font-weight:600;border-radius:12px}
+.cta{height:52px;border-radius:18px;background:var(--lime);color:var(--onLime);display:grid;place-items:center;font-size:15px;font-weight:800;margin-top:6px}
+.qs{margin:12px 16px 0;border-radius:18px;background:var(--surface);border:1px solid var(--line);padding:10px 12px 10px 10px;display:flex;align-items:center;gap:10px}
+.qs .t{font-size:13px;font-weight:700}.qs .s{font-size:10.5px;color:var(--muted)}
+.btn{white-space:nowrap;height:38px;border-radius:13px;display:grid;place-items:center;font-size:12.5px;font-weight:800;padding:0 14px;flex:none}.btn.lime{background:var(--lime);color:var(--onLime)}
+.rv{margin:10px 16px 0;border-radius:22px;background:var(--surface);border:1px solid var(--line);padding:12px}
+.rb{font-size:13.5px;font-weight:700}.rt{font-size:10.5px;color:var(--muted)}
+.cf{display:flex;align-items:center;gap:3px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:9px}.cf.hi{background:rgba(123,227,176,.13);color:var(--ok)}
+.ramt{display:flex;align-items:baseline;justify-content:space-between;margin-top:10px}.kind{font-size:12px;color:var(--t2)}.ramt .num{font-size:22px;font-weight:800}.ramt small{font-size:11px;color:var(--muted);font-weight:500}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.kv div{background:rgba(255,255,255,.035);border-radius:12px;padding:7px 10px}.kv span{font-size:10px;color:var(--muted);display:block}.kv b{font-size:12px;display:flex;align-items:center;gap:4px;margin-top:1px}
+.okc{color:var(--ok)}
+.raw{display:grid;grid-template-columns:auto auto;justify-content:start;gap:0 18px;margin-top:10px;font-size:11px;line-height:1.75;color:var(--t2);border-inline-start:2px solid rgba(232,252,180,.35);padding:2px 10px}
+.rawt{margin-top:10px;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.ra{display:flex;gap:6px;margin-top:10px}.ra .ok{flex:1;height:40px;border-radius:13px;background:var(--lime);color:var(--onLime);display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800}
+.ib{width:40px;height:40px;border-radius:13px;background:rgba(255,255,255,.06);border:1px solid var(--line);display:grid;place-items:center;color:var(--t2)}
+.gap{margin:10px 16px 0;border-radius:18px;background:rgba(255,201,119,.08);border:1px solid rgba(255,201,119,.22);padding:10px 12px;display:flex;align-items:center;gap:10px;font-size:11.5px;line-height:1.6}
+.gap .btn{background:rgba(255,201,119,.16);color:var(--warn);height:34px;font-size:12px}
+.prof{margin:12px 16px 0;border-radius:20px;background:var(--surface);border:1px solid var(--line);padding:12px;display:flex;align-items:center;gap:12px}
+.ft{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:12px;min-height:100px;display:flex;flex-direction:column;justify-content:space-between}
+.ftt{font-size:13px;font-weight:700;margin-top:8px}.fts{font-size:10.5px;color:var(--muted)}
+.li{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;font-weight:600}.li:last-child{border-bottom:0}.li .ti{width:34px;height:34px;border-radius:11px}.li .end{margin-inline-start:auto;color:var(--muted);display:flex;align-items:center;gap:4px;font-size:11px;font-weight:500}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+<symbol id="list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+<symbol id="wallet" viewBox="0 0 24 24"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v3m0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M21 12h-4a2 2 0 0 0 0 4h4z"/></symbol>
+<symbol id="grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+<symbol id="out" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></symbol>
+<symbol id="in" viewBox="0 0 24 24"><path d="M17 7 7 17M16 17H7V8"/></symbol>
+<symbol id="trend" viewBox="0 0 24 24"><path d="M22 7l-8.5 8.5-5-5L2 17M16 7h6v6"/></symbol>
+<symbol id="go" viewBox="0 0 24 24"><path d="M17 17 7 7M16 7H7v9"/></symbol>
+<symbol id="swap" viewBox="0 0 24 24"><path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></symbol>
+<symbol id="chd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="chl" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="chr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="car" viewBox="0 0 24 24"><path d="M5 17H3v-5l2-5h14l2 5v5h-2M9 17h6M3 12h18"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></symbol>
+<symbol id="bag" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0"/></symbol>
+<symbol id="food" viewBox="0 0 24 24"><path d="M3 2v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2a5 5 0 0 0-5 5v6a2 2 0 0 0 2 2h3zm0 0v7"/></symbol>
+<symbol id="brief" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></symbol>
+<symbol id="phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
+<symbol id="zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></symbol>
+<symbol id="msg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="pen" viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+<symbol id="card" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20M6 15h4"/></symbol>
+<symbol id="target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
+<symbol id="users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/></symbol>
+<symbol id="split" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.4 6.4M12 12l-6.4 6.4"/></symbol>
+<symbol id="bank" viewBox="0 0 24 24"><path d="M3 22h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7M12 2l9 5H3z"/></symbol>
+<symbol id="receipt" viewBox="0 0 24 24"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1zM8 8h8M8 12h8M8 16h5"/></symbol>
+<symbol id="cal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2.5"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+<symbol id="tag" viewBox="0 0 24 24"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1"/></symbol>
+<symbol id="spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.6 5.6 1.9-5.6 1.9L12 18l-1.9-5.6-5.6-1.9 5.6-1.9zM19 3v4M21 5h-4"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+<symbol id="alert" viewBox="0 0 24 24"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3M12 9v4M12 17h.01"/></symbol>
+<symbol id="del" viewBox="0 0 24 24"><path d="M20 5H9l-7 7 7 7h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zM18 9l-6 6M12 9l6 6"/></symbol>
+<symbol id="nfc" viewBox="0 0 24 24"><path d="M6 8.3a7.4 7.4 0 0 1 0 7.4M9.5 6.2a11.8 11.8 0 0 1 0 11.6M12.9 4.1a15.9 15.9 0 0 1 0 15.8"/></symbol>
+<symbol id="sig" viewBox="0 0 24 24"><path d="M2 20h3v-4H2zM7.5 20h3v-8h-3zM13 20h3V8h-3zM18.5 20h3V3h-3z"/></symbol>
+<symbol id="wifi" viewBox="0 0 24 24"><path d="M12 20.5 1 8.5a16 16 0 0 1 22 0z"/></symbol>
+<symbol id="bat" viewBox="0 0 24 24"><path d="M10 2h4v2h2a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2z"/></symbol>
+</defs></svg>
+
+<div class="wrap">
+
+<!-- 1. خانه -->
+<div>
+<div class="ph">
+  <div class="cam"></div>
+  <div class="hero">
+    <div class="sb" style="padding:0 6px"><span>۱۴:۲۶</span><span class="si"><svg><use href="#sig"/></svg><svg><use href="#wifi"/></svg><svg><use href="#bat"/></svg></span></div>
+    <div class="sp" style="margin-top:6px">
+      <div class="row"><div class="av">م</div><div><div class="hi">سلام، محمدجواد</div><div class="sub">یکشنبه ۱۰ آبان</div></div></div>
+      <div class="row" style="gap:8px"><div class="cb"><svg class="ic"><use href="#eye"/></svg></div><div class="cb"><svg class="ic"><use href="#bell"/></svg><i class="dot"></i></div></div>
+    </div>
+    <div class="lbl">موجودی کل</div>
+    <div class="bal"><span class="num">۱۴٬۹۳۸٬۹۱۲</span><span class="unit">تومان</span></div>
+    <div class="delta"><svg class="ic s"><use href="#trend"/></svg>خالص آبان <span class="num">+۱۳٫۸</span> میلیون</div>
+    <div class="acts">
+      <div class="pill"><span class="pi"><svg class="ic s"><use href="#out"/></svg></span>ثبت هزینه</div>
+      <div class="pill"><span class="pi"><svg class="ic s"><use href="#in"/></svg></span>ثبت درآمد</div>
+    </div>
+  </div>
+  <div class="sh"><span>حساب‌ها</span><a>همه<svg class="ic s"><use href="#chl"/></svg></a></div>
+  <div class="car">
+    <div class="bc a1"><div class="sp"><span class="mono k">ک</span><span class="tagw">جاری</span></div><div><div class="bn">کشاورزی</div><div class="bv num">۹٬۸۷۳٬۶۱۲</div></div><div class="sp bf"><span>تومان</span><span class="num">•• ۴۴۱۷</span></div></div>
+    <div class="bc a2"><div class="sp"><span class="mono b">ب</span><span class="tagw">اصلی</span></div><div><div class="bn">بلو</div><div class="bv num">۴٬۲۱۵٬۳۰۰</div></div><div class="sp bf"><span>تومان</span><span class="num">•• ۱۲۰۸</span></div></div>
+    <div class="bc a3"><div class="sp"><span class="mono c"><svg class="ic s"><use href="#wallet"/></svg></span><span class="tagw">نقد</span></div><div><div class="bn">کیف پول</div><div class="bv num">۸۵۰٬۰۰۰</div></div><div class="sp bf"><span>تومان</span><span></span></div></div>
+  </div>
+  <div class="gl">
+    <div class="sp"><span class="gt"><svg class="ic s"><use href="#cal"/></svg>نزدیک‌ترین تعهد</span><span class="go"><svg class="ic s"><use href="#go"/></svg></span></div>
+    <div class="row" style="align-items:baseline;gap:6px;margin-top:4px"><span class="gn num">۴</span><span class="gu">روز دیگر</span></div>
+    <div class="gs">قسط وام خودرو · <span class="num">۳٬۲۰۰٬۰۰۰</span> تومان · ۱۴ آبان</div>
+    <div class="segs"><i class="f"></i><i class="f"></i><i class="f"></i><i class="c"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+  <div class="tiles">
+    <div class="tl blue"><div class="sp"><span class="tt" style="color:#fff">ورودی آبان</span><span class="ta"><svg class="ic"><use href="#in"/></svg></span></div><div class="tv"><span class="num">۳۲٫۵</span> <small style="color:rgba(255,255,255,.8)">میلیون</small></div><div class="ts" style="color:rgba(255,255,255,.85)">۲ تراکنش · حقوق</div></div>
+    <div class="tl"><div class="sp"><span class="tt">خروجی آبان</span><span class="ta"><svg class="ic"><use href="#out"/></svg></span></div><div class="tv"><span class="num">۱۸٫۷</span> <small>میلیون</small></div><div class="bar"><span style="width:58%"></span></div><div class="ts">۵۸٪ از ورودی</div></div>
+  </div>
+  <div class="fade"></div>
+  <div class="dock">
+    <div class="it on"><span class="ind"><svg class="ic"><use href="#home"/></svg></span>خانه</div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#list"/></svg></span>تراکنش‌ها</div>
+    <div class="fab"><svg class="ic l"><use href="#plus"/></svg></div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#wallet"/></svg></span>حساب‌ها</div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#grid"/></svg></span>بیشتر</div>
+  </div>
+  <div class="gest"></div>
+</div>
+<div class="cap">۱. خانه</div>
+</div>
+
+<!-- 2. جزئیات حساب -->
+<div>
+<div class="ph">
+  <div class="cam"></div>
+  <div class="hero" style="padding-bottom:4px">
+    <div class="sb" style="padding:0 6px"><span>۱۴:۲۶</span><span class="si"><svg><use href="#sig"/></svg><svg><use href="#wifi"/></svg><svg><use href="#bat"/></svg></span></div>
+    <div class="tb"><div class="cb"><svg class="ic"><use href="#chr"/></svg></div><div class="tbt">حساب کشاورزی</div><div class="cb"><svg class="ic"><use href="#pen"/></svg></div></div>
+    <div class="big a1">
+      <div class="sp"><div class="row" style="gap:9px"><span class="mono k">ک</span><div><div style="font-weight:700;font-size:14px">بانک کشاورزی</div><div style="font-size:11px;opacity:.88">حساب جاری</div></div></div><svg class="ic l" style="opacity:.9"><use href="#nfc"/></svg></div>
+      <div class="pan num">6037 70•• •••• 4417</div>
+      <div class="sp" style="align-items:flex-end"><div><div class="bl">موجودی</div><div class="bb"><span class="num">۹٬۸۷۳٬۶۱۲</span> <small>تومان</small></div></div><div class="sync"><svg class="ic s"><use href="#check"/></svg>تطبیق‌شده · ۰۹:۴۸</div></div>
+    </div>
+    <div class="pdots"><i class="on"></i><i></i><i></i></div>
+  </div>
+  <div class="ctl">
+    <div><span class="cc"><svg class="ic"><use href="#swap"/></svg></span>انتقال</div>
+    <div><span class="cc"><svg class="ic"><use href="#list"/></svg></span>گردش حساب</div>
+    <div><span class="cc"><svg class="ic"><use href="#msg"/></svg></span>الگوی پیامک</div>
+    <div><span class="cc"><svg class="ic"><use href="#card"/></svg></span>کارت‌ها</div>
+  </div>
+  <div class="tiles" style="margin-top:16px">
+    <div class="tl"><div class="tt">خروجی این ماه</div><div class="tv" style="font-size:19px"><span class="num">۱۲٫۴</span> <small>/ ۳۲٫۵ م</small></div><div class="bar"><span style="width:38%"></span></div><span class="pct">۳۸٪</span></div>
+    <div class="tl"><div class="tt">اقساط از این حساب</div><div class="tv" style="font-size:19px"><span class="num">۳</span> <small>/ ۱۲ قسط</small></div><div class="bar"><span style="width:25%"></span></div><span class="pct">۲۵٪</span></div>
+  </div>
+  <div class="dh" style="margin-top:16px"><span style="color:#fff;font-weight:700;font-size:13px">آخرین تراکنش‌ها</span><span style="color:var(--sky)">همه</span></div>
+  <div class="grp">
+    <div class="tx"><span class="ti c-warn"><svg class="ic"><use href="#tag"/></svg></span><div class="tm"><div class="tn">برداشت با کارت</div><div class="tsub wc">بدون دسته · امروز ۰۹:۴۸</div></div><div class="tamt"><span class="num">−۴۵٬۰۰۰</span><span class="src sms">پیامک</span></div></div>
+    <div class="tx"><span class="ti c-ok"><svg class="ic"><use href="#brief"/></svg></span><div class="tm"><div class="tn">حقوق آبان</div><div class="tsub">واریز پایا · دیروز</div></div><div class="tamt"><span class="num in">+۳۲٬۵۰۰٬۰۰۰</span><span class="src sms">پیامک</span></div></div>
+  </div>
+  <div class="gest"></div>
+</div>
+<div class="cap">۲. جزئیات حساب</div>
+</div>
+
+<!-- 3. تراکنش‌ها -->
+<div>
+<div class="ph glow">
+  <div class="cam"></div>
+  <div class="sb"><span>۱۴:۲۶</span><span class="si"><svg><use href="#sig"/></svg><svg><use href="#wifi"/></svg><svg><use href="#bat"/></svg></span></div>
+  <div class="sp" style="margin:8px 16px 0"><div class="title">تراکنش‌ها</div><div class="cb d"><svg class="ic"><use href="#sliders"/></svg></div></div>
+  <div class="search"><svg class="ic"><use href="#search"/></svg>جستجوی فروشگاه، توضیح یا مبلغ</div>
+  <div class="chips"><span class="chip on">همه</span><span class="chip">هزینه</span><span class="chip">درآمد</span><span class="chip">انتقال</span><span class="chip">حساب<svg class="ic s"><use href="#chd"/></svg></span></div>
+  <div class="mc">
+    <div class="sp"><div><div class="mcl">آبان ۱۴۰۵</div><div class="mcv">۲۴ تراکنش</div></div><div class="mca"><span class="num in">+۳۲٬۵۰۰٬۰۰۰</span><span class="num">−۱۸٬۷۴۰٬۰۰۰</span></div></div>
+    <div class="split"><span style="width:63%"></span></div>
+  </div>
+  <div class="dh"><span>امروز · یکشنبه ۱۰ آبان</span><span class="num">−۲۵۰٬۰۰۰</span></div>
+  <div class="grp">
+    <div class="tx"><span class="ti c-sky"><svg class="ic"><use href="#car"/></svg></span><div class="tm"><div class="tn">اسنپ</div><div class="tsub">حمل‌ونقل · بلو · ۱۴:۲۲</div></div><div class="tamt"><span class="num">−۱۸۵٬۰۰۰</span><span class="src">دستی</span></div></div>
+    <div class="tx"><span class="ti c-lime"><svg class="ic"><use href="#phone"/></svg></span><div class="tm"><div class="tn">خرید شارژ</div><div class="tsub">شارژ و اینترنت · بلو · ۱۳:۰۸</div></div><div class="tamt"><span class="num">−۲۰٬۰۰۰</span><span class="src sms">پیامک</span></div></div>
+    <div class="tx"><span class="ti c-warn"><svg class="ic"><use href="#tag"/></svg></span><div class="tm"><div class="tn">برداشت با کارت</div><div class="tsub wc">بدون دسته · کشاورزی · ۰۹:۴۸</div></div><div class="tamt"><span class="num">−۴۵٬۰۰۰</span><span class="src sms">پیامک</span></div></div>
+  </div>
+  <div class="dh"><span>دیروز · شنبه ۹ آبان</span><span class="num in">+۳۱٬۳۰۰٬۰۰۰</span></div>
+  <div class="grp">
+    <div class="tx"><span class="ti c-ok"><svg class="ic"><use href="#brief"/></svg></span><div class="tm"><div class="tn">حقوق آبان</div><div class="tsub">واریز پایا · کشاورزی</div></div><div class="tamt"><span class="num in">+۳۲٬۵۰۰٬۰۰۰</span><span class="src sms">پیامک</span></div></div>
+    <div class="tx"><span class="ti c-food"><svg class="ic"><use href="#food"/></svg></span><div class="tm"><div class="tn">رستوران · دنگ ۴ نفره</div><div class="tsub">خوراک · نقد</div></div><div class="tamt"><span class="num">−۱٬۲۰۰٬۰۰۰</span><span class="src">دستی</span></div></div>
+  </div>
+  <div class="fade"></div>
+  <div class="dock">
+    <div class="it"><span class="ind"><svg class="ic"><use href="#home"/></svg></span>خانه</div>
+    <div class="it on"><span class="ind"><svg class="ic"><use href="#list"/></svg></span>تراکنش‌ها</div>
+    <div class="fab"><svg class="ic l"><use href="#plus"/></svg></div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#wallet"/></svg></span>حساب‌ها</div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#grid"/></svg></span>بیشتر</div>
+  </div>
+  <div class="gest"></div>
+</div>
+<div class="cap">۳. تراکنش‌ها</div>
+</div>
+
+<!-- 4. ثبت سریع -->
+<div>
+<div class="ph">
+  <div class="cam"></div>
+  <div class="hero" style="height:200px"><div class="sb" style="padding:0 6px"><span>۱۴:۲۶</span><span class="si"><svg><use href="#sig"/></svg><svg><use href="#wifi"/></svg><svg><use href="#bat"/></svg></span></div></div>
+  <div class="scrim"></div>
+  <div class="sheet">
+    <div class="hdl"></div>
+    <div class="seg"><span class="on">هزینه</span><span>درآمد</span><span>انتقال</span></div>
+    <div class="amt"><i class="caret"></i><span class="num">۱۸۵٬۰۰۰</span><span class="unit">تومان</span></div>
+    <div class="words">صد و هشتاد و پنج هزار تومان</div>
+    <div class="fields">
+      <div class="fld"><span class="mono b sm">ب</span>بلو<svg class="ic s end"><use href="#chd"/></svg></div>
+      <div class="fld"><svg class="ic s" style="color:var(--sky)"><use href="#cal"/></svg>امروز · ۱۴:۲۲<svg class="ic s end"><use href="#chd"/></svg></div>
+    </div>
+    <div class="cats">
+      <div class="cat on"><span class="ti c-sky"><svg class="ic"><use href="#car"/></svg></span>حمل‌ونقل</div>
+      <div class="cat"><span class="ti c-food"><svg class="ic"><use href="#food"/></svg></span>خوراک</div>
+      <div class="cat"><span class="ti c-shop"><svg class="ic"><use href="#bag"/></svg></span>خرید</div>
+      <div class="cat"><span class="ti c-warn"><svg class="ic"><use href="#zap"/></svg></span>قبض</div>
+      <div class="cat"><span class="ti c-vio"><svg class="ic"><use href="#grid"/></svg></span>بیشتر</div>
+    </div>
+    <div class="note"><svg class="ic s"><use href="#pen"/></svg>توضیح، شخص، هدف یا عکس رسید<svg class="ic s end"><use href="#plus"/></svg></div>
+    <div class="kp" dir="ltr"><span>۱</span><span>۲</span><span>۳</span><span>۴</span><span>۵</span><span>۶</span><span>۷</span><span>۸</span><span>۹</span><span style="font-size:17px">۰۰۰</span><span>۰</span><span><svg class="ic l"><use href="#del"/></svg></span></div>
+    <div class="cta">ثبت هزینه</div>
+  </div>
+  <div class="gest"></div>
+</div>
+<div class="cap">۴. ثبت سریع (دکمه +)</div>
+</div>
+
+<!-- 5. صف بررسی پیامک -->
+<div>
+<div class="ph glow">
+  <div class="cam"></div>
+  <div class="sb"><span>۱۴:۲۶</span><span class="si"><svg><use href="#sig"/></svg><svg><use href="#wifi"/></svg><svg><use href="#bat"/></svg></span></div>
+  <div class="tb" style="margin:6px 16px 0"><div class="cb d"><svg class="ic"><use href="#chr"/></svg></div><div class="tbt">بررسی پیامک‌ها</div><div class="cb d"><svg class="ic"><use href="#sliders"/></svg></div></div>
+  <div class="qs"><div style="flex:1"><div class="t">۲ مورد آماده تأیید</div><div class="s">مانده مطابق · ۱ پیامک تکراری حذف شد</div></div><div class="btn lime">تأیید همه</div></div>
+  <div class="gap"><svg class="ic" style="color:var(--warn)"><use href="#alert"/></svg><div style="flex:1">بلو: <b class="num">۲٫۸</b> میلیون تومان خروجی بین ۶ و ۷ آبان پیامک نداشته</div><div class="btn">ثبت تعدیل</div></div>
+  <div class="rv">
+    <div class="sp"><div class="row" style="gap:8px"><span class="mono k sm">ک</span><div><div class="rb">کشاورزی</div><div class="rt">امروز · ۱۱:۳۰</div></div></div><span class="cf hi"><svg class="ic s"><use href="#check"/></svg>۹۶٪</span></div>
+    <div class="ramt"><span class="kind">برداشت با کارت</span><span><span class="num">−۱۲۵٬۰۰۰</span> <small>تومان</small></span></div>
+    <div class="kv">
+      <div><span>حساب</span><b>کشاورزی <span class="num">••۴۴۱۷</span></b></div>
+      <div><span>مانده</span><b class="okc"><svg class="ic s"><use href="#check"/></svg>مطابق</b></div>
+      <div><span>دسته</span><b class="wc">انتخاب کنید<svg class="ic s"><use href="#chd"/></svg></b></div>
+      <div><span>زمان</span><b>۱۰ آبان · ۱۱:۳۰</b></div>
+    </div>
+    <div class="raw"><span>برداشت1,250,000</span><span>مانده97,486,120</span><span>050810-11:30</span><span>کارت4417*</span><span>bki. ir</span></div>
+    <div class="ra"><div class="ok"><svg class="ic s"><use href="#check"/></svg>تأیید</div><div class="ib"><svg class="ic s"><use href="#pen"/></svg></div><div class="ib"><svg class="ic s"><use href="#x"/></svg></div></div>
+  </div>
+  <div class="rv">
+    <div class="sp"><div class="row" style="gap:8px"><span class="mono b sm">ب</span><div><div class="rb">بلو</div><div class="rt">امروز · ۱۰:۱۵</div></div></div><span class="cf hi"><svg class="ic s"><use href="#check"/></svg>۹۲٪</span></div>
+    <div class="ramt"><span class="kind">برداشت پول</span><span><span class="num">−۳۴۰٬۰۰۰</span> <small>تومان</small></span></div>
+    <div class="rawt"><svg class="ic s"><use href="#msg"/></svg>متن پیامک<svg class="ic s"><use href="#chd"/></svg></div>
+    <div class="ra"><div class="ok"><svg class="ic s"><use href="#check"/></svg>تأیید</div><div class="ib"><svg class="ic s"><use href="#pen"/></svg></div><div class="ib"><svg class="ic s"><use href="#x"/></svg></div></div>
+  </div>
+  <div class="gest"></div>
+</div>
+<div class="cap">۵. صف بررسی پیامک</div>
+</div>
+
+<!-- 6. بیشتر -->
+<div>
+<div class="ph glow">
+  <div class="cam"></div>
+  <div class="sb"><span>۱۴:۲۶</span><span class="si"><svg><use href="#sig"/></svg><svg><use href="#wifi"/></svg><svg><use href="#bat"/></svg></span></div>
+  <div class="title" style="margin:8px 16px 0">بیشتر</div>
+  <div class="prof"><div class="av">م</div><div style="flex:1"><div class="hi" style="font-size:14px">محمدجواد</div><div class="sub wc" style="white-space:nowrap;display:flex;align-items:center;gap:4px"><svg class="ic s"><use href="#alert"/></svg>پشتیبان: ۹ روز پیش</div></div><div class="btn lime" style="height:36px">پشتیبان‌گیری</div></div>
+  <div class="tiles">
+    <div class="ft"><span class="ti c-sky"><svg class="ic"><use href="#bank"/></svg></span><div><div class="ftt">وام و اقساط</div><div class="fts">۲ وام · قسط بعدی ۴ روز</div></div></div>
+    <div class="ft"><span class="ti c-ok"><svg class="ic"><use href="#receipt"/></svg></span><div><div class="ftt">بدهی و طلب</div><div class="fts">طلب <span class="num">۱٫۲</span> م · بدهی <span class="num">۰٫۴</span> م</div></div></div>
+    <div class="ft"><span class="ti c-lime"><svg class="ic"><use href="#target"/></svg></span><div><div class="ftt">اهداف پس‌انداز</div><div class="fts">۲ هدف · ۴۰٪</div><div class="bar" style="margin-top:6px"><span style="width:40%"></span></div></div></div>
+    <div class="ft"><span class="ti c-food"><svg class="ic"><use href="#split"/></svg></span><div><div class="ftt">دنگ</div><div class="fts">۱ گروه باز · سفر شمال</div></div></div>
+  </div>
+  <div class="grp" style="margin-top:12px">
+    <div class="li"><span class="ti c-vio"><svg class="ic s"><use href="#users"/></svg></span>اشخاص<span class="end">۸ نفر<svg class="ic s"><use href="#chl"/></svg></span></div>
+    <div class="li"><span class="ti c-shop"><svg class="ic s"><use href="#tag"/></svg></span>دسته‌بندی‌ها<span class="end"><svg class="ic s"><use href="#chl"/></svg></span></div>
+    <div class="li"><span class="ti c-lime"><svg class="ic s"><use href="#spark"/></svg></span>قوانین هوشمند<span class="end">۶ فعال<svg class="ic s"><use href="#chl"/></svg></span></div>
+    <div class="li"><span class="ti c-sky"><svg class="ic s"><use href="#msg"/></svg></span>بانک‌ها و الگوی پیامک<span class="end">۲ بانک<svg class="ic s"><use href="#chl"/></svg></span></div>
+    <div class="li"><span class="ti c-bad"><svg class="ic s"><use href="#shield"/></svg></span>امنیت و تنظیمات<span class="end"><svg class="ic s"><use href="#chl"/></svg></span></div>
+  </div>
+  <div class="fade"></div>
+  <div class="dock">
+    <div class="it"><span class="ind"><svg class="ic"><use href="#home"/></svg></span>خانه</div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#list"/></svg></span>تراکنش‌ها</div>
+    <div class="fab"><svg class="ic l"><use href="#plus"/></svg></div>
+    <div class="it"><span class="ind"><svg class="ic"><use href="#wallet"/></svg></span>حساب‌ها</div>
+    <div class="it on"><span class="ind"><svg class="ic"><use href="#grid"/></svg></span>بیشتر</div>
+  </div>
+  <div class="gest"></div>
+</div>
+<div class="cap">۶. بیشتر</div>
+</div>
+
+</div>
+</body>
+</html>

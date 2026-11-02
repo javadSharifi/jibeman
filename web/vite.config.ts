@@ -1,0 +1,45 @@
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      manifest: {
+        name: 'جیب من — مدیریت مالی شخصی',
+        short_name: 'جیب من',
+        description: 'مدیریت هزینه‌ها، درآمدها، حساب‌های بانکی و وام‌ها به‌صورت کاملاً آفلاین و خصوصی',
+        theme_color: '#05060D',
+        background_color: '#05060D',
+        display: 'standalone',
+        orientation: 'portrait',
+        dir: 'rtl',
+        lang: 'fa',
+        icons: [
+          {
+            src: 'favicon.svg',
+            sizes: '192x192',
+            type: 'image/svg+xml'
+          },
+          {
+            src: 'favicon.svg',
+            sizes: '512x512',
+            type: 'image/svg+xml'
+          },
+          {
+            src: 'favicon.svg',
+            sizes: '512x512',
+            type: 'image/svg+xml',
+            purpose: 'any maskable'
+          }
+        ]
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}']
+      }
+    })
+  ]
+});

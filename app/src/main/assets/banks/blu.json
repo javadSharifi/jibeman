@@ -1,0 +1,14 @@
+{
+  "bank": "blu", "name": "بلو", "unit": "RIAL",
+  "detect": { "senders": ["09999987641"], "signature": "(به حساب شما نشست|از حساب شما پرید)" },
+  "kinds": [
+    { "pattern": "نشست", "type": "INCOME" },
+    { "pattern": "پرید", "type": "EXPENSE" }
+  ],
+  "fields": {
+    "amount": "(\\d+)\\s*ریال\\s*(?:به حساب|بابت|از حساب)",
+    "balance": "موجودی:\\s*(\\d+)\\s*ریال",
+    "description": "بابت (.+?) از حساب",
+    "datetime": { "pattern": "^(\\d{2}):(\\d{2})\\s+(1[34]\\d{2})\\.(\\d{2})\\.(\\d{2})$", "order": "HmyMd" }
+  }
+}

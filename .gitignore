@@ -1,0 +1,11 @@
+docs/sms-samples.txt
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+web/node_modules/
+web/dist/
+.wrangler/
+.DS_Store

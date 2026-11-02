@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jibeman-sync",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jibeman-db",
+      "database_id": "32228ff8-2ec7-4de4-b778-20eb3ed2d382",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

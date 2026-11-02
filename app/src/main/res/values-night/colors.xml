@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- window background before Compose draws: matches C.bg of the dark palette -->
+    <color name="bg">#05060D</color>
+</resources>

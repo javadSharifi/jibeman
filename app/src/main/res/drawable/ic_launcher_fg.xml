@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- a pocket ("jib") -->
+    <path android:fillColor="#E8FCB4" android:pathData="M34,34 H74 V62 Q74,75 54,82 Q34,75 34,62 Z" />
+    <path android:strokeColor="#2F6FDC" android:strokeWidth="4" android:strokeLineCap="round" android:pathData="M34,46 H74" />
+    <path android:fillColor="#2F6FDC" android:pathData="M54,58 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+</vector>

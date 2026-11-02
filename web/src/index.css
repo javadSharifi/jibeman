@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .hero-gradient {
+    background: radial-gradient(140% 78% at 50% -6%, #90B8FF 0%, #4A84EE 30%, #1B3883 58%, rgba(5,6,13,0) 86%), #05060D;
+  }
+  
+  .glass-card {
+    background: radial-gradient(70% 60% at 15% 0%, rgba(255,255,255,0.62), transparent 70%),
+                conic-gradient(from 205deg at 78% 118%, transparent 0deg 8deg, rgba(255,255,255,0.3) 18deg, transparent 30deg 44deg, rgba(255,255,255,0.22) 56deg, transparent 70deg),
+                linear-gradient(155deg, #A9D6F2 0%, #4A91E4 46%, #2453B8 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 10px 24px rgba(8,28,90,0.35);
+  }
+
+  .glass-card-2 {
+    background: radial-gradient(70% 60% at 85% 0%, rgba(255,255,255,0.6), transparent 70%),
+                conic-gradient(from 150deg at 20% 120%, transparent 0deg 8deg, rgba(255,255,255,0.28) 18deg, transparent 30deg 44deg, rgba(255,255,255,0.2) 56deg, transparent 70deg),
+                linear-gradient(155deg, #B6CDFF 0%, #5A8CF2 46%, #2A55C6 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 10px 24px rgba(8,28,90,0.35);
+  }
+
+  .glass-card-3 {
+    background: radial-gradient(70% 60% at 30% 0%, rgba(255,255,255,0.55), transparent 70%),
+                linear-gradient(155deg, #CACCFF 0%, #727AEC 48%, #3A3FAE 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 10px 24px rgba(8,28,90,0.35);
+  }
+
+  .glass-highlight {
+    background: radial-gradient(80% 120% at 8% 125%, rgba(255,255,255,0.5), transparent 55%),
+                linear-gradient(135deg, #7FA8FA 0%, #3C70DE 50%, #1D3F9C 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 12px 28px rgba(8,28,90,0.4);
+  }
+
+  .dock-gradient {
+    background: #11162F;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  }
+
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 16px);
+  }
+
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 84px);
+  }
+}
