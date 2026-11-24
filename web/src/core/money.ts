@@ -83,6 +83,14 @@ export const Money = {
     return `${LRI}${sign}${this.group(Number(whole))}${fraction}${PDI}`;
   },
 
+  toToman(rial: number): number {
+    return Math.floor(rial / 10);
+  },
+
+  toRial(toman: number): number {
+    return Math.round(toman * 10);
+  },
+
   /** rial -> "۳۲٫۵ میلیون" / "۸۵۰ هزار" (toman) */
   short(rial: number): string {
     const t = Math.abs(Math.floor(rial / 10));

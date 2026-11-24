@@ -1,7 +1,73 @@
 import React, { useState, useEffect } from 'react';
-import { X, Award, CheckCircle2, Target, CreditCard } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  X,
+  Award,
+  CheckCircle2,
+  Target,
+  CreditCard,
+  ShieldAlert,
+  FileText,
+  UserCheck,
+  Lock,
+  Box,
+  AlertTriangle,
+  CheckSquare,
+  Square,
+  ChevronDown,
+  ChevronUp,
+  Footprints,
+  Clock,
+} from 'lucide-react';
 import { db, type CompareSession, type CompareItem, type Account, type Category } from '../../core/db';
 import { Money } from '../../core/money';
+import { ImpulseBrakeModal } from '../impulse/ImpulseBrakeModal';
+
+interface LegalCheckItem {
+  id: string;
+  title: string;
+  description: string;
+  icon: LucideIcon;
+  critical: boolean;
+}
+
+const LEGAL_CHECKS: LegalCheckItem[] = [
+  {
+    id: 'invoice',
+    title: 'فاکتور معتبر چاپی با مهر و درج سریال',
+    description: 'درج دقیق شماره سریال (IMEI / VIN / Serial Number) و مهر و امضای معتبر فروشنده/فروشگاه روی فاکتور.',
+    icon: FileText,
+    critical: true,
+  },
+  {
+    id: 'test_warranty',
+    title: 'مهلت تست مکتوب با حق فسخ صریح',
+    description: 'قید صریح حداقل ۴۸ تا ۷۲ ساعت مهلت تست و تعهد مکتوب به استرداد کامل وجه در صورت هرگونه نقص فنی یا مغایرت.',
+    icon: ShieldAlert,
+    critical: true,
+  },
+  {
+    id: 'seller_account',
+    title: 'واریز منحصراً به حساب شخص فروشنده (مالک)',
+    description: 'نام دارنده کارت/حساب بانکی دقیقاً با کارت شناسایی فروشنده تطبیق داده شود. هرگز به حساب شخص ثالث واریز نکنید (شگرد کلاهبرداری مثلثی).',
+    icon: UserCheck,
+    critical: true,
+  },
+  {
+    id: 'ownership_transfer',
+    title: 'انتقال قطعی مالکیت و خروج کامل اکانت‌ها',
+    description: 'انتقال مالکیت همتا در محل (گوشی) / سند و تعویض پلاک (خودرو) / خروج کامل از iCloud، Google، BIOS Password و BitLocker.',
+    icon: Lock,
+    critical: true,
+  },
+  {
+    id: 'physical_delivery',
+    title: 'تحویل فیزیکی کامل کالا و متعلقات فابریک',
+    description: 'دریافت جعبه فابریک با شماره سریال یکسان، شارژر و آداپتور اصلی، برگه گارانتی و کلیه متعلقات قبل از پرداخت و ترک محل.',
+    icon: Box,
+    critical: false,
+  },
+];
 
 interface DecideModalProps {
   session: CompareSession;
@@ -23,6 +89,11 @@ export function DecideModal({
   const [selectedAccountId, setSelectedAccountId] = useState<number>(0);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isImpulseModalOpen, setIsImpulseModalOpen] = useState(false);
+
+  // Legal safety checklist state
+  const [checkedLegal, setCheckedLegal] = useState<Record<string, boolean>>({});
+  const [showLegalDetails, setShowLegalDetails] = useState(true);
 
   useEffect(() => {
     Promise.all([
@@ -39,14 +110,35 @@ export function DecideModal({
     });
   }, []);
 
+  const toggleLegalCheck = (id: string) => {
+    setCheckedLegal(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const selectAllLegal = () => {
+    const all: Record<string, boolean> = {};
+    LEGAL_CHECKS.forEach(c => (all[c.id] = true));
+    setCheckedLegal(all);
+  };
+
+  const checkedLegalCount = LEGAL_CHECKS.filter(c => checkedLegal[c.id]).length;
+  const criticalUncheckedCount = LEGAL_CHECKS.filter(c => c.critical && !checkedLegal[c.id]).length;
+
   const handleConfirmDecision = async () => {
     setIsSubmitting(true);
     try {
+      // Build summary of legal checks for note
+      const legalPassed = LEGAL_CHECKS.filter(c => checkedLegal[c.id]).map(c => c.title);
+      const legalNotePart = legalPassed.length > 0
+        ? `\n[چک‌لیست حقوقی تایید شده: ${legalPassed.length}/${LEGAL_CHECKS.length} مورد]`
+        : '';
+
+      const finalNote = (decisionNote.trim() + legalNotePart).trim();
+
       // 1. Mark session as decided
       await db.compareSessions.update(session.id!, {
         status: 'DECIDED',
         chosenItemId: item.id!,
-        decisionNote: decisionNote.trim() || undefined,
+        decisionNote: finalNote || undefined,
         decidedAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -59,7 +151,7 @@ export function DecideModal({
           accountId: selectedAccountId,
           categoryId: selectedCategoryId || undefined,
           title: `خرید ${item.name}`,
-          note: decisionNote.trim() || `انتخاب شده در مقایسه «${session.title}»`,
+          note: finalNote || `انتخاب شده در مقایسه «${session.title}»`,
           occurredAt: Date.now(),
           source: 'MANUAL',
           createdAt: Date.now(),
@@ -122,16 +214,108 @@ export function DecideModal({
             </div>
           </div>
 
+          {/* Legal and Handover Safety Checklist */}
+          <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 overflow-hidden">
+            <div
+              onClick={() => setShowLegalDetails(!showLegalDetails)}
+              className="p-3 bg-amber-500/15 flex items-center justify-between cursor-pointer select-none"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldAlert size={16} className="text-amber-400 shrink-0" />
+                <span className="text-xs font-black text-amber-200">
+                  چک‌لیست حقوقی و تحویل کالا (قبل از پرداخت)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  checkedLegalCount === LEGAL_CHECKS.length
+                    ? 'bg-ok/20 text-ok border border-ok/40'
+                    : 'bg-amber-400/20 text-amber-300'
+                }`}>
+                  {checkedLegalCount} از {LEGAL_CHECKS.length}
+                </span>
+                {showLegalDetails ? <ChevronUp size={14} className="text-amber-300" /> : <ChevronDown size={14} className="text-amber-300" />}
+              </div>
+            </div>
+
+            {showLegalDetails && (
+              <div className="p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted">
+                    برای جلوگیری از کلاهبرداری یا خرید مال مسروقه/معیوب، قبل از واریز بررسی کنید:
+                  </p>
+                  {checkedLegalCount < LEGAL_CHECKS.length && (
+                    <button
+                      onClick={selectAllLegal}
+                      className="text-[10px] font-bold text-amber-300 hover:underline shrink-0 pr-1"
+                    >
+                      تایید همه
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {LEGAL_CHECKS.map(check => {
+                    const isChecked = !!checkedLegal[check.id];
+                    const Icon = check.icon;
+                    return (
+                      <div
+                        key={check.id}
+                        onClick={() => toggleLegalCheck(check.id)}
+                        className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-start gap-2.5 ${
+                          isChecked
+                            ? 'bg-ok/10 border-ok/40'
+                            : 'bg-surface/80 border-line hover:border-amber-500/40'
+                        }`}
+                      >
+                        <div className="mt-0.5 shrink-0">
+                          {isChecked ? (
+                            <CheckSquare size={16} className="text-ok" />
+                          ) : (
+                            <Square size={16} className="text-muted" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Icon size={13} className={isChecked ? 'text-ok' : 'text-amber-400'} />
+                            <span className={`text-xs font-bold ${isChecked ? 'text-ok' : 'text-white'}`}>
+                              {check.title}
+                            </span>
+                            {check.critical && !isChecked && (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-bad/20 text-bad font-semibold">
+                                حیاتی
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted mt-1 leading-relaxed">
+                            {check.description}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {criticalUncheckedCount > 0 && actionType === 'TXN' && (
+                  <div className="p-2 rounded-xl bg-bad/15 border border-bad/30 flex items-center gap-2 text-[10px] text-bad font-bold">
+                    <AlertTriangle size={14} className="shrink-0" />
+                    <span>توجه: {criticalUncheckedCount} مورد حیاتی هنوز تایید نشده است! هرگز بدون فاکتور، مهلت تست و واریز به حساب مالک پول ندهید.</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Decision Reason / Note */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-white flex items-center gap-1">
-              📝 دلیل انتخاب شما:
+              📝 یادداشت و دلیل انتخاب شما:
             </label>
             <textarea
               rows={2}
               value={decisionNote}
               onChange={e => setDecisionNote(e.target.value)}
-              placeholder="مثلاً: بهترین ترکیب قیمت و کیفیت دوربین را داشت و گارانتی معتبرتر بود..."
+              placeholder="مثلاً: بهترین ترکیب قیمت و کیفیت را داشت، مهلت تست مکتوب داد و مدارک تایید شد..."
               className="w-full bg-surface2 border border-line rounded-xl p-2.5 text-xs text-white placeholder-muted focus:outline-none focus:border-lime"
             />
           </div>
@@ -247,6 +431,29 @@ export function DecideModal({
                 </div>
               </div>
             )}
+
+            {/* Option 4: Impulse Purchase Brake (Store Exit Rule) */}
+            {item.price && item.price > 0 && (
+              <div
+                onClick={() => setIsImpulseModalOpen(true)}
+                className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15 flex items-center gap-2.5 cursor-pointer transition-all"
+              >
+                <div className="w-7 h-7 rounded-lg bg-amber-400 text-black flex items-center justify-center shrink-0">
+                  <ShieldAlert size={16} />
+                </div>
+                <div className="flex-1">
+                  <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    ترمز خرید هیجانی (قانون خروج از فروشگاه)
+                  </div>
+                  <div className="text-[10px] text-muted mt-0.5">
+                    مکث ۳۰ دقیقه‌ای، بررسی احساسات و ایجاد فاصله زمانی قبل از پرداخت
+                  </div>
+                </div>
+                <div className="text-[10px] font-bold text-amber-400 bg-amber-400/20 px-2 py-1 rounded-lg">
+                  شروع ترمز
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -260,6 +467,26 @@ export function DecideModal({
             {isSubmitting ? 'در حال ثبت...' : 'تایید و ثبت نهایی تصمیم'}
           </button>
         </div>
+
+        {/* Impulse Brake Modal */}
+        <ImpulseBrakeModal
+          isOpen={isImpulseModalOpen}
+          onClose={() => setIsImpulseModalOpen(false)}
+          initialData={{
+            itemTitle: item.name,
+            amountRial: item.price,
+            storeName: item.storeName,
+            compareSessionId: session.id,
+            compareItemId: item.id,
+            accountId: selectedAccountId || undefined,
+            categoryId: selectedCategoryId || undefined,
+          }}
+          onSuccess={() => {
+            setIsImpulseModalOpen(false);
+            onSuccess();
+            onClose();
+          }}
+        />
       </div>
     </div>
   );

@@ -15,6 +15,8 @@ import {
   X,
   ArrowRight,
   AlertCircle,
+  Scale,
+  ShieldAlert,
 } from 'lucide-react';
 import { Jalali } from '../core/jalali';
 import { Money } from '../core/money';
@@ -575,6 +577,54 @@ export function Home({
           </div>
         </div>
       )}
+
+      {/* Shopping Compare & Impulse Brake Assistant Banners */}
+      <div className="mt-4 px-4 space-y-2">
+        <div
+          onClick={() => (onNavigateSubRoute ? onNavigateSubRoute('impulse') : onNavigateTab(3))}
+          role="button"
+          tabIndex={0}
+          className="p-3.5 rounded-[22px] bg-gradient-to-r from-amber-950/40 via-surface to-surface border border-amber-500/20 hover:border-amber-400/40 cursor-pointer active:scale-98 transition-all flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+              <ShieldAlert size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white block">ترمز خرید هیجانی (خرید آگاهانه)</span>
+                <span className="text-[9px] font-black bg-amber-400 text-black px-1.5 py-0.2 rounded-full">
+                  جدید
+                </span>
+              </div>
+              <p className="text-[10px] text-muted mt-0.5">
+                قانون خروج از فروشگاه، تایمر تفکر و جلوگیری از خریدهای احساسی
+              </p>
+            </div>
+          </div>
+          <ChevronLeft size={16} className="text-muted" />
+        </div>
+
+        <div
+          onClick={() => (onNavigateSubRoute ? onNavigateSubRoute('compare') : onNavigateTab(3))}
+          role="button"
+          tabIndex={0}
+          className="p-3.5 rounded-[22px] bg-gradient-to-r from-emerald-950/40 via-surface to-surface border border-emerald-500/20 hover:border-emerald-500/40 cursor-pointer active:scale-98 transition-all flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center shrink-0">
+              <Scale size={20} />
+            </div>
+            <div>
+              <span className="text-xs font-bold text-white block">دستیار مقایسه و انتخاب خرید</span>
+              <p className="text-[10px] text-muted mt-0.5">
+                مقایسه دقیق گزینه‌ها، بررسی خط قرمزها و تحلیل ارزش خرید
+              </p>
+            </div>
+          </div>
+          <ChevronLeft size={16} className="text-muted" />
+        </div>
+      </div>
 
       {/* 4. Recent Transactions */}
       <div className="mt-6 px-4">

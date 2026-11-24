@@ -20,6 +20,9 @@ import { People } from './pages/People';
 import { Rules } from './pages/Rules';
 import { Security } from './pages/Security';
 import { ShoppingCompare } from './pages/ShoppingCompare';
+import { ImpulseBrakeDashboard } from './pages/ImpulseBrakeDashboard';
+import { ActiveBrakeBanner } from './components/impulse/ActiveBrakeBanner';
+import { ImpulseBrakeModal } from './components/impulse/ImpulseBrakeModal';
 import { LockScreen } from './components/LockScreen';
 import { isLockEnabled, shouldLock, recordActivity } from './core/security';
 
@@ -37,6 +40,10 @@ export function App() {
   const [hidden, setHidden] = useState<boolean>(() => {
     return localStorage.getItem('jibeman_privacy_hidden') === 'true';
   });
+
+  // Impulse Brake Modal State
+  const [activeBrakeSessionId, setActiveBrakeSessionId] = useState<number | null>(null);
+  const [isBrakeModalOpen, setIsBrakeModalOpen] = useState(false);
 
   const toggleHidden = () => {
     setHidden(prev => {
@@ -106,6 +113,7 @@ export function App() {
     if (subRoute === 'rules') return <Rules onBack={() => setSubRoute(null)} />;
     if (subRoute === 'security') return <Security onBack={() => setSubRoute(null)} />;
     if (subRoute === 'compare') return <ShoppingCompare onBack={() => setSubRoute(null)} hidden={hidden} />;
+    if (subRoute === 'impulse') return <ImpulseBrakeDashboard onBack={() => setSubRoute(null)} hidden={hidden} />;
 
     switch (activeTab) {
       case 0:
@@ -137,8 +145,30 @@ export function App() {
     <div className="min-h-screen bg-bg text-white max-w-md mx-auto relative flex flex-col selection:bg-lime selection:text-onLime">
       {/* Page Content */}
       <main className="flex-1 safe-top">
+        {/* Active Cooling Brake Banner */}
+        {subRoute !== 'impulse' && (
+          <ActiveBrakeBanner
+            onOpenSession={id => {
+              setActiveBrakeSessionId(id);
+              setIsBrakeModalOpen(true);
+            }}
+          />
+        )}
         {renderContent()}
       </main>
+
+      {/* Impulse Brake Modal */}
+      <ImpulseBrakeModal
+        isOpen={isBrakeModalOpen}
+        sessionId={activeBrakeSessionId}
+        onClose={() => {
+          setIsBrakeModalOpen(false);
+          setActiveBrakeSessionId(null);
+        }}
+        onSuccess={() => {
+          setActiveTab(t => t);
+        }}
+      />
 
       {/* Floating Bottom Dock (only on main tabs) */}
       {!subRoute && (

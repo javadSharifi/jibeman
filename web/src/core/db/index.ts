@@ -186,6 +186,16 @@ export interface CompareSession {
   chosenItemId?: number;
   decisionNote?: string;
   decidedAt?: number;
+  sellerFlags?: string[];
+  scorecard?: {
+    needFit: number;
+    valueForPrice: number;
+    quality: number;
+    sellerTrust: number;
+    marketResearch: number;
+    warranty: number;
+    maintenanceCost: number;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -205,7 +215,8 @@ export interface CompareItem {
   id?: number;
   sessionId: number;
   name: string;
-  price?: number; // rial
+  price?: number; // rial (قیمت پیشنهادی فروشنده)
+  marketPrice?: number; // rial (قیمت عرف و واقعی بازار)
   storeName?: string;
   url?: string;
   warranty?: string;
@@ -223,6 +234,80 @@ export interface CompareCheck {
   criterionId: number;
   state: 'PASS' | 'FAIL' | 'UNKNOWN';
   note?: string;
+  updatedAt: number;
+}
+
+export type PurchaseMotivation =
+  | 'REAL_NEED'
+  | 'REPLACEMENT'
+  | 'SPECIAL_DISCOUNT'
+  | 'EXCITEMENT'
+  | 'PEER_PRESSURE'
+  | 'FEEL_GOOD_ESCAPE'
+  | 'FOMO'
+  | 'SELLER_RECOMMENDATION'
+  | 'OTHER';
+
+export type ImpulseSessionStatus =
+  | 'COOLING_OFF'
+  | 'WAITING_EVAL'
+  | 'CANCELLED'
+  | 'PURCHASED'
+  | 'EMERGENCY_BYPASS';
+
+export interface ImpulseSession {
+  id?: number;
+  itemTitle: string;
+  amount: number; // rial
+  categoryName?: string;
+  storeName?: string;
+  compareSessionId?: number;
+  compareItemId?: number;
+  accountId?: number;
+  categoryId?: number;
+
+  // Emotional & Context checklist
+  isTired: boolean;
+  isStressed: boolean;
+  isRushing: boolean;
+  isSellerPushing: boolean;
+  isOverexcited: boolean;
+  hasResearched: boolean;
+  isPrePlanned: boolean;
+
+  // Primary motivation
+  motivation: PurchaseMotivation;
+  motivationNote?: string;
+
+  // Store exit & Timing
+  leftStoreAt?: number;
+  requiredDelayMinutes: number;
+  coolingStartsAt: number;
+  coolingEndsAt: number;
+
+  // Notes
+  initialEmotionNote?: string;
+  intentNote?: string;
+
+  // Post-brake evaluation answers
+  postEval?: {
+    stillNeed: boolean;
+    stillExcited: boolean;
+    badIfSkipped: boolean;
+    alternativesChecked: boolean;
+    priceCompared: boolean;
+    sellerPressureFelt: boolean;
+    happyTomorrow: boolean;
+    finalNote?: string;
+  };
+
+  // Outcome
+  status: ImpulseSessionStatus;
+  savedAmount?: number; // rial saved if cancelled
+  finalTxnId?: number;
+  completedAt?: number;
+  bypassReason?: string;
+  createdAt: number;
   updatedAt: number;
 }
 
@@ -257,6 +342,7 @@ export const SYNC_TABLES = [
   'compareCriteria',
   'compareItems',
   'compareChecks',
+  'impulseSessions',
 ] as const;
 
 export type SyncTableName = (typeof SYNC_TABLES)[number];
@@ -290,6 +376,7 @@ export class JibemanDatabase extends Dexie {
   compareCriteria!: Table<CompareCriterion, number>;
   compareItems!: Table<CompareItem, number>;
   compareChecks!: Table<CompareCheck, number>;
+  impulseSessions!: Table<ImpulseSession, number>;
   outbox!: Table<Outbox, string>;
 
   constructor() {
@@ -344,6 +431,10 @@ export class JibemanDatabase extends Dexie {
       compareCriteria: '++id, sessionId, strict, sortOrder',
       compareItems: '++id, sessionId, price, createdAt',
       compareChecks: '++id, sessionId, itemId, criterionId, state',
+    });
+
+    this.version(6).stores({
+      impulseSessions: '++id, status, coolingEndsAt, createdAt, updatedAt',
     });
 
     this.use({

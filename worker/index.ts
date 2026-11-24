@@ -26,6 +26,7 @@ const TABLES = new Set([
   'compareCriteria',
   'compareItems',
   'compareChecks',
+  'impulseSessions',
 ]);
 
 const MAX_CHANGES = 200; // per request

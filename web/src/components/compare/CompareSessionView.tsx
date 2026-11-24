@@ -20,6 +20,9 @@ import {
   Target,
   Sparkles,
   Zap,
+  ShieldAlert,
+  Flame,
+  Footprints,
 } from 'lucide-react';
 import {
   db,
@@ -42,6 +45,9 @@ import { HeadToHeadModal } from './HeadToHeadModal';
 import { MatrixModal } from './MatrixModal';
 import { DecideModal } from './DecideModal';
 import { ShareModal } from './ShareModal';
+import { DealGuardModal } from './DealGuardModal';
+import { CheapPriceTrapModal } from './CheapPriceTrapModal';
+import { ImpulseBrakeModal } from '../impulse/ImpulseBrakeModal';
 
 interface CompareSessionViewProps {
   sessionId: number;
@@ -62,6 +68,7 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
   // New Item Form
   const [newItemName, setNewItemName] = useState('');
   const [newItemPriceToman, setNewItemPriceToman] = useState('');
+  const [newItemMarketPriceToman, setNewItemMarketPriceToman] = useState('');
   const [newItemStore, setNewItemStore] = useState('');
   const [newItemUrl, setNewItemUrl] = useState('');
   const [newItemWarranty, setNewItemWarranty] = useState('');
@@ -75,13 +82,17 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
   // Edit Item State
   const [editingItem, setEditingItem] = useState<CompareItem | null>(null);
   const [editPriceToman, setEditPriceToman] = useState('');
+  const [editMarketPriceToman, setEditMarketPriceToman] = useState('');
 
   // Modals
   const [quickCheckItem, setQuickCheckItem] = useState<CompareItem | null>(null);
+  const [trapModalItem, setTrapModalItem] = useState<CompareItem | null>(null);
   const [isHeadToHeadOpen, setIsHeadToHeadOpen] = useState(false);
   const [isMatrixOpen, setIsMatrixOpen] = useState(false);
   const [decideItem, setDecideItem] = useState<CompareItem | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isDealGuardOpen, setIsDealGuardOpen] = useState(false);
+  const [isImpulseModalOpen, setIsImpulseModalOpen] = useState(false);
   const [isEditSessionOpen, setIsEditSessionOpen] = useState(false);
   const [editSessionTitle, setEditSessionTitle] = useState('');
   const [editSessionBudgetToman, setEditSessionBudgetToman] = useState('');
@@ -125,11 +136,13 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
     if (!newItemName.trim() || !session) return;
 
     const price = newItemPriceToman ? Money.parseToman(newItemPriceToman) : undefined;
+    const marketPrice = newItemMarketPriceToman ? Money.parseToman(newItemMarketPriceToman) : undefined;
 
     await db.compareItems.add({
       sessionId: session.id!,
       name: newItemName.trim(),
       price: price || undefined,
+      marketPrice: marketPrice || undefined,
       storeName: newItemStore.trim() || undefined,
       url: newItemUrl.trim() || undefined,
       warranty: newItemWarranty.trim() || undefined,
@@ -139,6 +152,7 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
 
     setNewItemName('');
     setNewItemPriceToman('');
+    setNewItemMarketPriceToman('');
     setNewItemStore('');
     setNewItemUrl('');
     setNewItemWarranty('');
@@ -202,10 +216,12 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
   const handleUpdateItem = async () => {
     if (!editingItem) return;
     const price = editPriceToman ? Money.parseToman(editPriceToman) : undefined;
+    const marketPrice = editMarketPriceToman ? Money.parseToman(editMarketPriceToman) : undefined;
 
     await db.compareItems.update(editingItem.id!, {
       name: editingItem.name.trim(),
       price: price || undefined,
+      marketPrice: marketPrice || undefined,
       storeName: editingItem.storeName?.trim() || undefined,
       url: editingItem.url?.trim() || undefined,
       warranty: editingItem.warranty?.trim() || undefined,
@@ -280,6 +296,51 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
         </button>
       </div>
 
+      {/* Buyer's Protection & Seller Red Flags Banner */}
+      <div
+        onClick={() => setIsDealGuardOpen(true)}
+        className={`p-3 rounded-2xl border mb-3 flex items-center justify-between cursor-pointer transition-all active:scale-98 ${
+          session.sellerFlags && session.sellerFlags.length > 0
+            ? 'bg-danger/15 border-danger/60 text-danger animate-pulse'
+            : 'bg-surface hover:bg-surface2 border-line text-white'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold ${
+              session.sellerFlags && session.sellerFlags.length > 0
+                ? 'bg-danger text-white'
+                : 'bg-lime/20 text-lime'
+            }`}
+          >
+            <ShieldAlert size={18} />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-black">
+                {session.sellerFlags && session.sellerFlags.length > 0
+                  ? `هشدار: ${Money.fa(String(session.sellerFlags.length))} خط قرمز فروشنده فعال است!`
+                  : 'سپر امنیتی معامله و سنجش صداقت فروشنده'}
+              </span>
+              {session.sellerFlags && session.sellerFlags.length > 0 && (
+                <span className="text-[9px] font-black bg-danger text-white px-1.5 py-0.2 rounded-full">
+                  خطر
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-muted mt-0.5">
+              {session.sellerFlags && session.sellerFlags.length > 0
+                ? 'فروشنده رفتار مشکوک داشته است؛ برای مشاهده جزئیات ضربه بزنید'
+                : 'بررسی خطوط قرمز، نمره ۱۰۰ تایی خرید و قوانین طلایی معامله'}
+            </p>
+          </div>
+        </div>
+
+        <button className="text-xs text-sky font-bold px-2 py-1 rounded-lg bg-white/5 shrink-0">
+          بررسی
+        </button>
+      </div>
+
       {/* Action Pills Bar */}
       <div className="grid grid-cols-3 gap-2 mb-3">
         <button
@@ -307,6 +368,32 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
         >
           <Share2 size={14} className="text-lime" />
           اشتراک متن
+        </button>
+      </div>
+
+      {/* Impulse Purchase Brake Button / Card */}
+      <div
+        onClick={() => setIsImpulseModalOpen(true)}
+        className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/15 via-surface to-surface border border-amber-500/30 hover:border-amber-400/50 mb-3 cursor-pointer active:scale-98 transition-all flex items-center justify-between"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-400 flex items-center justify-center shrink-0">
+            <Footprints size={17} />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white">ترمز خرید هیجانی (قانون خروج از فروشگاه)</span>
+              <span className="text-[9px] font-black bg-amber-400 text-black px-1.5 py-0.2 rounded-full">
+                آگاهانه
+              </span>
+            </div>
+            <p className="text-[10px] text-muted mt-0.5">
+              احساس عجله یا اصرار فروشنده دارید؟ حداقل ۳۰ دقیقه از فروشگاه خارج شوید.
+            </p>
+          </div>
+        </div>
+        <button className="text-xs text-amber-300 font-bold px-2 py-1 rounded-lg bg-amber-500/10 shrink-0">
+          شروع مکث
         </button>
       </div>
 
@@ -572,47 +659,57 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[10px] text-muted mb-1 block">قیمت به تومان (اختیاری):</label>
+              <label className="text-[10px] text-muted mb-1 block">قیمت فروشنده (تومان):</label>
               <AmountInput
                 value={newItemPriceToman}
                 onChange={setNewItemPriceToman}
-                placeholder="مثلاً ۳۲٫۰۰۰٫۰۰۰"
+                placeholder="مثلاً ۲۰٫۰۰۰٫۰۰۰"
                 className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 focus:outline-none focus:border-lime"
               />
             </div>
 
             <div>
-              <label className="text-[10px] text-muted mb-1 block">فروشگاه یا فروشنده:</label>
-              <input
-                type="text"
-                placeholder="مثلاً: دیجی‌کالا / چارسو"
-                value={newItemStore}
-                onChange={e => setNewItemStore(e.target.value)}
-                className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 placeholder-muted focus:outline-none"
+              <label className="text-[10px] text-sky font-bold mb-1 block">قیمت عرف بازار (اختیاری):</label>
+              <AmountInput
+                value={newItemMarketPriceToman}
+                onChange={setNewItemMarketPriceToman}
+                placeholder="مثلاً ۲۸٫۰۰۰٫۰۰۰"
+                className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 focus:outline-none focus:border-sky"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="text-[10px] text-muted mb-1 block">گارانتی:</label>
+              <label className="text-[10px] text-muted mb-1 block">فروشگاه/فروشنده:</label>
               <input
                 type="text"
-                placeholder="مثلاً: ۱۸ ماهه شرکتی"
-                value={newItemWarranty}
-                onChange={e => setNewItemWarranty(e.target.value)}
-                className="w-full h-9 rounded-xl bg-surface2 border border-line text-xs text-white px-3 placeholder-muted focus:outline-none"
+                placeholder="مثلاً: دیوار / مغازه"
+                value={newItemStore}
+                onChange={e => setNewItemStore(e.target.value)}
+                className="w-full h-9 rounded-xl bg-surface2 border border-line text-xs text-white px-2 placeholder-muted focus:outline-none"
               />
             </div>
 
             <div>
-              <label className="text-[10px] text-muted mb-1 block">لینک صفحه محصول:</label>
+              <label className="text-[10px] text-muted mb-1 block">گارانتی:</label>
+              <input
+                type="text"
+                placeholder="مثلاً: ۱۸ ماهه"
+                value={newItemWarranty}
+                onChange={e => setNewItemWarranty(e.target.value)}
+                className="w-full h-9 rounded-xl bg-surface2 border border-line text-xs text-white px-2 placeholder-muted focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] text-muted mb-1 block">لینک صفحه:</label>
               <input
                 type="url"
                 placeholder="https://..."
                 value={newItemUrl}
                 onChange={e => setNewItemUrl(e.target.value)}
-                className="w-full h-9 rounded-xl bg-surface2 border border-line text-xs text-white px-3 placeholder-muted focus:outline-none"
+                className="w-full h-9 rounded-xl bg-surface2 border border-line text-xs text-white px-2 placeholder-muted focus:outline-none"
               />
             </div>
           </div>
@@ -699,6 +796,12 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
                           <span>قیمت ثبت نشده</span>
                         )}
 
+                        {item.marketPrice && (
+                          <span className="text-[10px] text-muted line-through" title="قیمت عرف بازار">
+                            عرف: {Money.toman(item.marketPrice)} ت
+                          </span>
+                        )}
+
                         {item.storeName && (
                           <span>· 🏪 {item.storeName}</span>
                         )}
@@ -734,6 +837,29 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
                     style={{ width: `${stats.matchPercent}%` }}
                   />
                 </div>
+
+                {/* Suspicious Cheap Price Trap Alert Banner */}
+                {stats.isSuspiciouslyCheap && (
+                  <div
+                    onClick={() => setTrapModalItem(item)}
+                    className="p-2.5 rounded-xl bg-danger/15 border-2 border-danger/60 text-danger mb-3 flex items-center justify-between cursor-pointer active:scale-98 animate-pulse"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Flame size={17} className="shrink-0 text-danger" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-black truncate">
+                          هشدار: {Money.fa(String(stats.belowMarketPercent))}٪ زیر قیمت عرف بازار!
+                        </div>
+                        <div className="text-[10px] text-danger/80 truncate">
+                          هول نشو و گول نخور! برای باز کردن چک‌لیست ضد کلاهبرداری ضربه بزن
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black bg-danger text-white px-2 py-0.5 rounded-lg shrink-0">
+                      چک‌لیست
+                    </span>
+                  </div>
+                )}
 
                 {/* Deal-breaker / Strict Failure Banner */}
                 {stats.hasStrictFailure && (
@@ -815,6 +941,7 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
                     onClick={() => {
                       setEditingItem(item);
                       setEditPriceToman(item.price ? Money.tomanInput(item.price) : '');
+                      setEditMarketPriceToman(item.marketPrice ? Money.tomanInput(item.marketPrice) : '');
                     }}
                     className="hover:text-white"
                   >
@@ -884,6 +1011,22 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
         />
       )}
 
+      {isDealGuardOpen && (
+        <DealGuardModal
+          session={session}
+          onClose={() => setIsDealGuardOpen(false)}
+          onRefresh={loadData}
+        />
+      )}
+
+      {trapModalItem && (
+        <CheapPriceTrapModal
+          item={trapModalItem}
+          stats={calculateItemStats(trapModalItem, criteria, checks, session.budget)}
+          onClose={() => setTrapModalItem(null)}
+        />
+      )}
+
       {/* Edit Item Modal */}
       {editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/80 backdrop-blur-md p-4">
@@ -905,13 +1048,25 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
               />
             </div>
 
-            <div>
-              <label className="text-[10px] text-muted block mb-1">قیمت به تومان:</label>
-              <AmountInput
-                value={editPriceToman}
-                onChange={setEditPriceToman}
-                className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 focus:outline-none"
-              />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-muted block mb-1">قیمت فروشنده (تومان):</label>
+                <AmountInput
+                  value={editPriceToman}
+                  onChange={setEditPriceToman}
+                  className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 focus:outline-none focus:border-lime"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-sky font-bold block mb-1">قیمت عرف بازار (اختیاری):</label>
+                <AmountInput
+                  value={editMarketPriceToman}
+                  onChange={setEditMarketPriceToman}
+                  placeholder="مثلاً ۲۵٫۰۰۰٫۰۰۰"
+                  className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 focus:outline-none focus:border-sky"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -996,6 +1151,22 @@ export function CompareSessionView({ sessionId, onBack }: CompareSessionViewProp
           </div>
         </div>
       )}
+
+      {/* Impulse Purchase Brake Modal */}
+      <ImpulseBrakeModal
+        isOpen={isImpulseModalOpen}
+        onClose={() => setIsImpulseModalOpen(false)}
+        initialData={{
+          itemTitle: items.length > 0 ? items[0].name : session.title,
+          amountRial: items.length > 0 ? items[0].price : session.budget,
+          storeName: items.length > 0 ? items[0].storeName : undefined,
+          compareSessionId: session.id,
+        }}
+        onSuccess={() => {
+          setIsImpulseModalOpen(false);
+          loadData();
+        }}
+      />
     </div>
   );
 }

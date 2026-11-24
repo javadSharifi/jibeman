@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { X, Delete, ArrowLeftRight, Check } from 'lucide-react';
+import { X, Delete, ArrowLeftRight, Check, ShieldAlert } from 'lucide-react';
 import { db, type Account, type Category } from '../core/db';
 import { Money } from '../core/money';
 import { AmountInput } from './AmountInput';
 import { Select } from './Select';
 import { CategoryIcon } from './UI';
+import { ImpulseBrakeModal } from './impulse/ImpulseBrakeModal';
 
 interface QuickAddProps {
   isOpen: boolean;
@@ -24,6 +25,7 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [isImpulseModalOpen, setIsImpulseModalOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -292,16 +294,54 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
           </button>
         </div>
 
+        {/* Mindful Shopping Mode Option (Impulse Purchase Brake) */}
+        {type === 'EXPENSE' && (
+          <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 my-2">
+            <div className="flex items-center gap-2">
+              <ShieldAlert size={16} className="text-amber-400 shrink-0" />
+              <div>
+                <span className="text-xs font-bold text-white block">حالت خرید آگاهانه</span>
+                <span className="text-[10px] text-muted block">ترمز خرید هیجانی و قانون خروج از فروشگاه</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={rial <= 0}
+              onClick={() => setIsImpulseModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-black active:scale-95 transition-all disabled:opacity-40"
+            >
+              فعال‌سازی ترمز
+            </button>
+          </div>
+        )}
+
         {/* Submit Button */}
         <button
           type="button"
           disabled={rial <= 0}
           onClick={handleSave}
-          className="w-full h-13 mt-2 py-3 rounded-2xl bg-lime text-onLime font-extrabold text-sm flex items-center justify-center gap-2 shadow-fab active:scale-[0.98] transition-transform disabled:opacity-40"
+          className="w-full h-13 mt-1 py-3 rounded-2xl bg-lime text-onLime font-extrabold text-sm flex items-center justify-center gap-2 shadow-fab active:scale-[0.98] transition-transform disabled:opacity-40"
         >
           <Check size={20} strokeWidth={2.8} />
-          <span>ثبت تراکنش</span>
+          <span>ثبت تراکنش عادی</span>
         </button>
+
+        {/* Impulse Brake Modal */}
+        <ImpulseBrakeModal
+          isOpen={isImpulseModalOpen}
+          onClose={() => setIsImpulseModalOpen(false)}
+          initialData={{
+            itemTitle: title.trim() || 'خرید کالا',
+            amountRial: rial,
+            accountId: selectedAccId || undefined,
+            categoryId: selectedCatId || undefined,
+          }}
+          onSuccess={(outcome) => {
+            setIsImpulseModalOpen(false);
+            onClose();
+            if (onSuccess) onSuccess();
+          }}
+        />
       </div>
     </div>
   );
