@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Search, ChevronRight, ChevronLeft, Trash2, X } from 'lucide-react';
 import { Jalali } from '../core/jalali';
 import { Money } from '../core/money';
-import { getTxnsWithDetails, type TxnWithDetails } from '../core/db/helpers';
+import { deleteTxnWithInstallmentLink, getTxnsWithDetails, type TxnWithDetails } from '../core/db/helpers';
 import { TxnRow } from '../components/TxnRow';
-import { db } from '../core/db';
 
 interface TransactionsProps {
   hidden: boolean;
@@ -58,7 +57,7 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
 
   const handleDelete = async (id: number) => {
     if (confirm('آیا از حذف این تراکنش اطمینان دارید؟')) {
-      await db.txns.delete(id);
+      await deleteTxnWithInstallmentLink(id);
       setSelectedTxn(null);
       loadTxns();
     }
@@ -140,13 +139,12 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
       <div className="space-y-4">
         {Object.keys(grouped).length > 0 ? (
           Object.entries(grouped).map(([dayKey, group]) => {
-            const dayToman = Math.floor(group.net / 10);
             return (
               <div key={dayKey}>
                 <div className="flex items-center justify-between text-[11px] text-muted px-2 mb-1.5">
                   <span>{group.label}</span>
-                  <span className={`dir-ltr font-semibold ${dayToman >= 0 ? 'text-ok' : 'text-muted'}`}>
-                    {hidden ? '•••' : `${dayToman >= 0 ? '+' : ''}${Money.group(dayToman)} تومان`}
+                  <span className={`dir-ltr font-semibold ${group.net >= 0 ? 'text-ok' : 'text-muted'}`}>
+                    {hidden ? '•••' : `${Money.toman(group.net, true)} تومان`}
                   </span>
                 </div>
 
@@ -172,7 +170,7 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
 
       {/* Detail & Delete Dialog */}
       {selectedTxn && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-line pb-3">
               <h3 className="text-sm font-bold text-white">جزئیات تراکنش</h3>
@@ -186,10 +184,10 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
 
             <div className="text-center py-2">
               <div className="text-2xl font-black text-white dir-ltr">
-                {Money.group(Math.floor(selectedTxn.amount / 10))} تومان
+                {Money.toman(selectedTxn.amount)} تومان
               </div>
               <div className="text-xs text-muted mt-1">
-                {Money.words(Math.floor(selectedTxn.amount / 10))} تومان
+                {Money.amountWords(selectedTxn.amount)}
               </div>
             </div>
 

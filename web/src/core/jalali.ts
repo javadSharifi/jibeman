@@ -64,6 +64,13 @@ export const Jalali = {
     return this.g2j(d.getFullYear(), d.getMonth() + 1, d.getDate());
   },
 
+  monthDays(y: number, m: number): number {
+    if (m <= 6) return 31;
+    if (m <= 11) return 30;
+    const [gy, gm, gd] = this.j2g(y, 12, 30);
+    return this.g2j(gy, gm, gd).d === 30 ? 30 : 29;
+  },
+
   millis(y: number, m: number, d: number, hour = 0, minute = 0): number {
     const [gy, gm, gd] = this.j2g(y, m, d);
     const date = new Date(gy, gm - 1, gd, hour, minute, 0, 0);

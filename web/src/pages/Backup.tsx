@@ -16,15 +16,22 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, seedInitialDataIfNeeded } from '../core/db';
 import { HeaderBar } from '../components/UI';
 import { connect, disconnect, getCfg, syncNow, SyncHttpError } from '../core/sync';
+import { exportBackup, restoreBackup } from '../core/backup';
+import { backupFormat, minimumBackupPassword } from '../core/crypto';
 
 export function Backup({ onBack }: { onBack: () => void }) {
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [backupAction, setBackupAction] = useState<'export' | 'restore'>();
+  const [backupPassword, setBackupPassword] = useState('');
+  const [backupPasswordAgain, setBackupPasswordAgain] = useState('');
+  const [backupFile, setBackupFile] = useState<{ text: string; encrypted: boolean }>();
+  const [backupError, setBackupError] = useState('');
 
   // Cloud Sync form state
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => getCfg()?.email ?? '');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
 
@@ -44,8 +51,8 @@ export function Backup({ onBack }: { onBack: () => void }) {
       setErrorMsg('لطفاً یک ایمیل معتبر وارد کنید.');
       return;
     }
-    if (password.length < 8) {
-      setErrorMsg('رمز عبور باید حداقل ۸ کاراکتر باشد.');
+    if (mode === 'register' ? Array.from(password).length < 12 : password.length < 8) {
+      setErrorMsg(mode === 'register' ? 'برای حساب جدید عبارت عبور با حداقل ۱۲ کاراکتر انتخاب کنید.' : 'رمز عبور باید حداقل ۸ کاراکتر باشد.');
       return;
     }
     if (mode === 'register' && password !== password2) {
@@ -71,6 +78,8 @@ export function Backup({ onBack }: { onBack: () => void }) {
           setErrorMsg('با این ایمیل قبلاً حساب ساخته شده است. لطفاً حالت «ورود» را انتخاب کنید.');
         } else if (err.status === 401) {
           setErrorMsg('ایمیل یا رمز اشتباه است، یا حسابی با این مشخصات یافت نشد.');
+        } else if (err.status === 426) {
+          setErrorMsg('سرور همگام‌سازی هنوز به نسخهٔ رمزنگاری‌شده به‌روزرسانی نشده است.');
         } else if (err.status === 429) {
           setErrorMsg('تعداد تلاش‌های شما بیش از حد بوده است. چند دقیقه دیگر امتحان کنید.');
         } else {
@@ -93,7 +102,12 @@ export function Backup({ onBack }: { onBack: () => void }) {
       refreshCfg();
       setStatusMsg('همگام‌سازی ابری با موفقیت انجام شد.');
     } catch (err: any) {
-      setErrorMsg('خطا در برقراری ارتباط با سرور.');
+      if (err instanceof SyncHttpError && err.status === 428) {
+        setSyncCfg(null);
+        setErrorMsg('برای باز کردن کلید همگام‌سازی، دوباره وارد حساب ابری شوید.');
+      } else {
+        setErrorMsg('همگام‌سازی انجام نشد. اتصال و نسخهٔ سرور را بررسی کنید.');
+      }
     } finally {
       setBusy(false);
     }
@@ -107,99 +121,58 @@ export function Backup({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const handleExport = async () => {
+  const closeBackup = () => {
+    setBackupAction(undefined);
+    setBackupFile(undefined);
+    setBackupPassword('');
+    setBackupPasswordAgain('');
+    setBackupError('');
+  };
+
+  const handleBackup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBackupError('');
+    if (backupAction === 'export' && (Array.from(backupPassword).length < minimumBackupPassword || backupPassword !== backupPasswordAgain)) {
+      setBackupError('عبارت پشتیبان باید حداقل ۱۲ کاراکتر داشته باشد و تکرار آن یکسان باشد.');
+      return;
+    }
+    setBusy(true);
     try {
-      const [accounts, cards, categories, txns, loans, installments, debts, debtPayments, goals, goalEntries, splitGroups, splitExpenses] = await Promise.all([
-        db.accounts.toArray(),
-        db.cards.toArray(),
-        db.categories.toArray(),
-        db.txns.toArray(),
-        db.loans.toArray(),
-        db.installments.toArray(),
-        db.debts.toArray(),
-        db.debtPayments.toArray(),
-        db.goals.toArray(),
-        db.goalEntries.toArray(),
-        db.splitGroups.toArray(),
-        db.splitExpenses.toArray(),
-      ]);
-
-      const backupObj = {
-        version: 1,
-        exportedAt: Date.now(),
-        data: {
-          accounts,
-          cards,
-          categories,
-          txns,
-          loans,
-          installments,
-          debts,
-          debtPayments,
-          goals,
-          goalEntries,
-          splitGroups,
-          splitExpenses,
-        }
-      };
-
-      const blob = new Blob([JSON.stringify(backupObj, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `jibeman-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setStatusMsg('پشتیبان محلی با موفقیت دانلود شد.');
-    } catch (e) {
-      alert('خطا در تهیه پشتیبان');
+      if (backupAction === 'export') {
+        const text = await exportBackup(backupPassword);
+        const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `jibeman-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setStatusMsg('پشتیبان رمزنگاری‌شده دانلود شد.');
+      } else if (backupFile) {
+        await restoreBackup(backupFile.text, backupPassword);
+        setStatusMsg('اطلاعات فایل پشتیبان بازیابی شد.');
+      }
+      closeBackup();
+    } catch {
+      setBackupError(backupAction === 'export'
+        ? 'تهیهٔ پشتیبان انجام نشد.'
+        : 'عبارت پشتیبان اشتباه است یا فایل معتبر نیست. اطلاعات فعلی حفظ شد.');
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
-
     try {
+      if (file.size > 64 * 1024 * 1024) throw new Error('Backup too large');
       const text = await file.text();
-      const parsed = JSON.parse(text);
-      if (!parsed.data) {
-        alert('فایل پشتیبان نامعتبر است.');
-        return;
-      }
-
-      const d = parsed.data;
-      await Promise.all([
-        db.accounts.clear(),
-        db.cards.clear(),
-        db.categories.clear(),
-        db.txns.clear(),
-        db.loans.clear(),
-        db.installments.clear(),
-        db.debts.clear(),
-        db.debtPayments.clear(),
-        db.goals.clear(),
-        db.goalEntries.clear(),
-        db.splitGroups.clear(),
-        db.splitExpenses.clear(),
-      ]);
-
-      if (d.accounts?.length) await db.accounts.bulkAdd(d.accounts);
-      if (d.cards?.length) await db.cards.bulkAdd(d.cards);
-      if (d.categories?.length) await db.categories.bulkAdd(d.categories);
-      if (d.txns?.length) await db.txns.bulkAdd(d.txns);
-      if (d.loans?.length) await db.loans.bulkAdd(d.loans);
-      if (d.installments?.length) await db.installments.bulkAdd(d.installments);
-      if (d.debts?.length) await db.debts.bulkAdd(d.debts);
-      if (d.debtPayments?.length) await db.debtPayments.bulkAdd(d.debtPayments);
-      if (d.goals?.length) await db.goals.bulkAdd(d.goals);
-      if (d.goalEntries?.length) await db.goalEntries.bulkAdd(d.goalEntries);
-      if (d.splitGroups?.length) await db.splitGroups.bulkAdd(d.splitGroups);
-      if (d.splitExpenses?.length) await db.splitExpenses.bulkAdd(d.splitExpenses);
-
-      setStatusMsg('داده‌ها با موفقیت بازیابی شدند.');
-    } catch (err) {
-      alert('خطا در خواندن فایل پشتیبان.');
+      const encrypted = JSON.parse(text)?.format === backupFormat;
+      setBackupFile({ text, encrypted });
+      setBackupAction('restore');
+    } catch {
+      alert('فایل پشتیبان قابل خواندن نیست.');
     }
   };
 
@@ -237,7 +210,7 @@ export function Backup({ onBack }: { onBack: () => void }) {
           )}
         </div>
 
-        {cfg ? (
+        {cfg?.version === 2 ? (
           /* Connected State */
           <div className="mt-4 space-y-4">
             <div className="p-3.5 rounded-2xl bg-surface2/60 border border-line/50 text-xs space-y-2">
@@ -304,6 +277,9 @@ export function Backup({ onBack }: { onBack: () => void }) {
               </button>
             </div>
 
+            {cfg && cfg.version !== 2 && <p className="mb-3 text-xs text-warn">
+              برای رمزنگاری و انتقال داده‌های قبلی، یک بار با رمز حساب ابری دوباره وارد شوید.
+            </p>}
             <form onSubmit={handleCloudAuth} className="space-y-3">
               <div className="relative">
                 <div className="absolute right-3.5 top-3.5 text-muted pointer-events-none">
@@ -328,7 +304,7 @@ export function Backup({ onBack }: { onBack: () => void }) {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="رمز عبور (حداقل ۸ کاراکتر)"
+                  placeholder={mode === 'register' ? 'عبارت عبور (حداقل ۱۲ کاراکتر)' : 'رمز حساب ابری'}
                   dir="ltr"
                   required
                   className="w-full h-11 pr-10 pl-3 rounded-xl bg-surface2/50 border border-line/60 text-white placeholder-muted text-xs focus:outline-none focus:border-sky transition-colors"
@@ -400,7 +376,7 @@ export function Backup({ onBack }: { onBack: () => void }) {
         <div className="space-y-3">
           {/* Export Button */}
           <button
-            onClick={handleExport}
+            onClick={() => setBackupAction('export')}
             className="w-full h-14 rounded-2xl bg-surface hover:bg-surface2 border border-line p-4 flex items-center justify-between text-white active:scale-98 transition-transform"
           >
             <div className="flex items-center gap-3">
@@ -408,8 +384,8 @@ export function Backup({ onBack }: { onBack: () => void }) {
                 <Download size={18} />
               </div>
               <div className="text-right">
-                <span className="text-xs font-bold block">دانلود فایل پشتیبان (JSON)</span>
-                <span className="text-[10px] text-muted">ذخیره تمام اطلاعات در قالب فایل</span>
+                <span className="text-xs font-bold block">دانلود پشتیبان رمزنگاری‌شده</span>
+                <span className="text-[10px] text-muted">بازیابی با عبارت پشتیبان</span>
               </div>
             </div>
           </button>
@@ -445,6 +421,35 @@ export function Backup({ onBack }: { onBack: () => void }) {
           </button>
         </div>
       </div>
+      {backupAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm">
+          <form onSubmit={handleBackup} role="dialog" aria-modal="true" aria-labelledby="backup-title"
+            className="w-full max-w-sm bg-sheet border border-line rounded-[28px] p-5 space-y-3">
+            <h2 id="backup-title" className="text-sm font-bold">{backupAction === 'export' ? 'رمزنگاری فایل پشتیبان' : 'بازیابی فایل پشتیبان'}</h2>
+            <p className="text-xs text-muted">{backupAction === 'export'
+              ? 'یک عبارت مستقل با حداقل ۱۲ کاراکتر انتخاب و آن را جای امن نگه دارید. بازیابی فایل به همین عبارت نیاز دارد.'
+              : backupFile?.encrypted ? 'اطلاعات فعلی با محتوای فایل جایگزین می‌شود.'
+                : 'این فایل قدیمی خواناست. اطلاعات فعلی جایگزین می‌شود. پس از بازیابی یک پشتیبان رمزنگاری‌شده بسازید.'}</p>
+            {(backupAction === 'export' || backupFile?.encrypted) && <label className="block text-xs">
+              عبارت پشتیبان
+              <input type="password" autoComplete={backupAction === 'export' ? 'new-password' : 'off'} value={backupPassword}
+                onChange={e => setBackupPassword(e.target.value)} required
+                className="mt-1 w-full rounded-xl bg-surface border border-line p-3" />
+            </label>}
+            {backupAction === 'export' && <label className="block text-xs">
+              تکرار عبارت پشتیبان
+              <input type="password" autoComplete="new-password" value={backupPasswordAgain}
+                onChange={e => setBackupPasswordAgain(e.target.value)} required
+                className="mt-1 w-full rounded-xl bg-surface border border-line p-3" />
+            </label>}
+            {backupError && <p role="alert" className="text-xs text-bad">{backupError}</p>}
+            <div className="flex gap-3">
+              <button disabled={busy} type="submit" className="rounded-xl bg-lime px-4 py-3 text-xs font-bold text-onLime">{backupAction === 'export' ? 'دانلود' : 'بازیابی'}</button>
+              <button disabled={busy} type="button" onClick={closeBackup} className="rounded-xl bg-surface px-4 py-3 text-xs">انصراف</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

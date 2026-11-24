@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { hasRawCardData, protectInTransaction } from './protectedRows';
 
 export interface Account {
   id?: number;
@@ -15,6 +16,8 @@ export interface Account {
   cardCvv2?: string;
   iban?: string;
   cardColor?: string;
+  privateData?: string;
+  isSavings?: boolean;
 }
 
 export interface Card {
@@ -56,7 +59,8 @@ export interface Loan {
   installment: number; // rial
   count: number;
   firstDueAt: number;
-  accountId?: number;
+  accountId?: number; // default account for installment payments
+  receiveAccountId?: number;
   note?: string;
   createdAt: number;
 }
@@ -68,6 +72,7 @@ export interface Installment {
   dueAt: number;
   amount: number;
   paidTxnId?: number;
+  paidAt?: number;
 }
 
 export interface Debt {
@@ -155,6 +160,24 @@ export interface Rule {
   enabled: boolean;
 }
 
+export interface SavingsCommitment {
+  id?: number;
+  accountId: number;
+  txnId?: number;
+  amount: number; // rial
+  paidAmount: number; // rial
+  note?: string;
+  createdAt: number;
+}
+
+export interface SavingsPayment {
+  id?: number;
+  commitmentId: number;
+  amount: number; // rial
+  at: number;
+  txnId?: number;
+}
+
 export interface Outbox {
   key: string; // `${tbl}|${id}`
   t: string;
@@ -180,13 +203,16 @@ export const SYNC_TABLES = [
   'splitExpenses',
   'splitShares',
   'rules',
+  'savingsCommitments',
+  'savingsPayments',
 ] as const;
 
 export type SyncTableName = (typeof SYNC_TABLES)[number];
 
-let isSyncingRemote = false;
-export function setSyncingRemote(val: boolean) {
-  isSyncingRemote = val;
+const remoteTransactions = new WeakSet<object>();
+export function markSyncTransaction() {
+  const tx = Dexie.currentTransaction;
+  if (tx) remoteTransactions.add(tx);
 }
 
 export class JibemanDatabase extends Dexie {
@@ -206,6 +232,8 @@ export class JibemanDatabase extends Dexie {
   splitExpenses!: Table<SplitExpense, number>;
   splitShares!: Table<SplitShare, number>;
   rules!: Table<Rule, number>;
+  savingsCommitments!: Table<SavingsCommitment, number>;
+  savingsPayments!: Table<SavingsPayment, number>;
   outbox!: Table<Outbox, string>;
 
   constructor() {
@@ -234,6 +262,47 @@ export class JibemanDatabase extends Dexie {
       outbox: 'key, t, updatedAt',
     });
 
+    this.version(3).stores({ cards: '++id, accountId', persons: '++id' }).upgrade(async tx => {
+      remoteTransactions.add(tx);
+      for (const name of ['accounts', 'cards', 'persons']) {
+        const table = tx.table(name);
+        const rows = (await table.toArray()).filter(row => hasRawCardData(name, row));
+        const protectedRows = [];
+        for (const row of rows) protectedRows.push(await protectInTransaction(name, row));
+        await table.bulkPut(protectedRows);
+      }
+    });
+
+    this.version(4).stores({
+      accounts: '++id, type, bankCode, archived, sortOrder, isSavings',
+      savingsCommitments: '++id, accountId, txnId, createdAt',
+      savingsPayments: '++id, commitmentId, txnId, at',
+    });
+
+    this.version(4).stores({
+      installments: '++id, loanId, dueAt, paidTxnId, paidAt',
+    });
+
+    this.use({
+      stack: 'dbcore',
+      name: 'protect-card-fields',
+      create: core => ({
+        ...core,
+        table: name => {
+          const table = core.table(name);
+          return {
+            ...table,
+            mutate: request => {
+              if ((request.type === 'add' || request.type === 'put') &&
+                  request.values.some(row => hasRawCardData(name, row))) {
+                return Promise.reject(new Error('Unencrypted card data cannot be stored'));
+              }
+              return table.mutate(request);
+            },
+          };
+        },
+      }),
+    });
     this.setupSyncHooks();
   }
 
@@ -243,7 +312,7 @@ export class JibemanDatabase extends Dexie {
       if (!table) continue;
 
       table.hook('creating', function (primKey, obj, trans) {
-        if (isSyncingRemote) return;
+        if (remoteTransactions.has(trans)) return;
         this.onsuccess = (key) => {
           const id = String(key ?? primKey ?? (obj as any)?.id);
           const now = Date.now();
@@ -258,7 +327,7 @@ export class JibemanDatabase extends Dexie {
       });
 
       table.hook('updating', function (modifications, primKey, obj, trans) {
-        if (isSyncingRemote) return;
+        if (remoteTransactions.has(trans)) return;
         const id = String(primKey ?? (obj as any)?.id);
         const now = Date.now();
         trans.table('outbox').put({
@@ -271,7 +340,7 @@ export class JibemanDatabase extends Dexie {
       });
 
       table.hook('deleting', function (primKey, obj, trans) {
-        if (isSyncingRemote) return;
+        if (remoteTransactions.has(trans)) return;
         const id = String(primKey);
         const now = Date.now();
         trans.table('outbox').put({
@@ -289,51 +358,49 @@ export class JibemanDatabase extends Dexie {
 export const db = new JibemanDatabase();
 
 export async function seedInitialDataIfNeeded() {
-  const count = await db.categories.count();
-  if (count === 0) {
-    const defaultCategories: Omit<Category, 'id'>[] = [
-      { name: 'خوراک', kind: 'EXPENSE', icon: 'Utensils', color: 1, sortOrder: 0 },
-      { name: 'حمل‌ونقل', kind: 'EXPENSE', icon: 'Car', color: 0, sortOrder: 1 },
-      { name: 'خرید', kind: 'EXPENSE', icon: 'ShoppingBag', color: 2, sortOrder: 2 },
-      { name: 'قبض', kind: 'EXPENSE', icon: 'Zap', color: 6, sortOrder: 3 },
-      { name: 'شارژ و اینترنت', kind: 'EXPENSE', icon: 'Smartphone', color: 4, sortOrder: 4 },
-      { name: 'خانه', kind: 'EXPENSE', icon: 'Home', color: 5, sortOrder: 5 },
-      { name: 'سلامت', kind: 'EXPENSE', icon: 'Heart', color: 7, sortOrder: 6 },
-      { name: 'تفریح', kind: 'EXPENSE', icon: 'Gift', color: 2, sortOrder: 7 },
-      { name: 'آموزش', kind: 'EXPENSE', icon: 'BookOpen', color: 0, sortOrder: 8 },
-      { name: 'قسط و وام', kind: 'EXPENSE', icon: 'Building2', color: 0, sortOrder: 9 },
-      { name: 'سایر', kind: 'EXPENSE', icon: 'Tag', color: 5, sortOrder: 10 },
-      { name: 'حقوق', kind: 'INCOME', icon: 'Briefcase', color: 3, sortOrder: 11 },
-      { name: 'فروش', kind: 'INCOME', icon: 'ShoppingBag', color: 3, sortOrder: 12 },
-      { name: 'هدیه', kind: 'INCOME', icon: 'Gift', color: 4, sortOrder: 13 },
-      { name: 'سایر درآمد', kind: 'INCOME', icon: 'PlusCircle', color: 3, sortOrder: 14 },
-    ];
-    await db.categories.bulkAdd(defaultCategories);
-  }
+  await db.transaction('rw', [db.categories, db.accounts, db.outbox], async () => {
+    markSyncTransaction();
+    const count = await db.categories.count();
+    if (count === 0) {
+      const defaultCategories: Omit<Category, 'id'>[] = [
+        { name: 'خوراک', kind: 'EXPENSE', icon: 'Utensils', color: 1, sortOrder: 0 },
+        { name: 'حمل‌ونقل', kind: 'EXPENSE', icon: 'Car', color: 0, sortOrder: 1 },
+        { name: 'خرید', kind: 'EXPENSE', icon: 'ShoppingBag', color: 2, sortOrder: 2 },
+        { name: 'قبض', kind: 'EXPENSE', icon: 'Zap', color: 6, sortOrder: 3 },
+        { name: 'شارژ و اینترنت', kind: 'EXPENSE', icon: 'Smartphone', color: 4, sortOrder: 4 },
+        { name: 'خانه', kind: 'EXPENSE', icon: 'Home', color: 5, sortOrder: 5 },
+        { name: 'سلامت', kind: 'EXPENSE', icon: 'Heart', color: 7, sortOrder: 6 },
+        { name: 'تفریح', kind: 'EXPENSE', icon: 'Gift', color: 2, sortOrder: 7 },
+        { name: 'آموزش', kind: 'EXPENSE', icon: 'BookOpen', color: 0, sortOrder: 8 },
+        { name: 'قسط و وام', kind: 'EXPENSE', icon: 'Building2', color: 0, sortOrder: 9 },
+        { name: 'سایر', kind: 'EXPENSE', icon: 'Tag', color: 5, sortOrder: 10 },
+        { name: 'حقوق', kind: 'INCOME', icon: 'Briefcase', color: 3, sortOrder: 11 },
+        { name: 'فروش', kind: 'INCOME', icon: 'ShoppingBag', color: 3, sortOrder: 12 },
+        { name: 'هدیه', kind: 'INCOME', icon: 'Gift', color: 4, sortOrder: 13 },
+        { name: 'سایر درآمد', kind: 'INCOME', icon: 'PlusCircle', color: 3, sortOrder: 14 },
+      ];
+      await db.categories.bulkAdd(defaultCategories);
+    }
 
-  const accCount = await db.accounts.count();
-  if (accCount === 0) {
-    const accId = await db.accounts.add({
-      name: 'بلو بانک',
-      type: 'BANK',
-      bankCode: 'blu',
-      initialBalance: 0,
-      style: 0,
-      archived: false,
-      sortOrder: 0,
-      cardNumber: '6219861800000000',
-    });
-    await db.cards.add({
-      accountId: accId,
-      last4: '0000',
-    });
-    await db.accounts.add({
-      name: 'کیف پول نقدی',
-      type: 'CASH',
-      initialBalance: 0,
-      style: 1,
-      archived: false,
-      sortOrder: 1,
-    });
-  }
+    const accCount = await db.accounts.count();
+    if (accCount === 0) {
+      await db.accounts.add({
+        name: 'بلو بانک',
+        type: 'BANK',
+        bankCode: 'blu',
+        initialBalance: 0,
+        style: 0,
+        archived: false,
+        sortOrder: 0,
+      });
+      await db.accounts.add({
+        name: 'کیف پول نقدی',
+        type: 'CASH',
+        initialBalance: 0,
+        style: 1,
+        archived: false,
+        sortOrder: 1,
+      });
+    }
+  });
 }

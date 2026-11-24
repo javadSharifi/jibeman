@@ -50,6 +50,8 @@ dependencies {
     implementation("net.zetetic:sqlcipher-android:4.12.0@aar")
     implementation("androidx.sqlite:sqlite:2.6.2")
     implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment:1.8.9") // Activity Result support for the backup file picker
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87") // PBKDF2-HMAC-SHA256 also on Android 24 and 25
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517") // real org.json for JVM tests (android.jar only has stubs)
 }

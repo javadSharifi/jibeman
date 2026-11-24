@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AmountInput } from '../components/AmountInput';
 import { Plus, X, Users, Receipt, UserPlus, CheckCircle2 } from 'lucide-react';
 import { db, type SplitGroup, type SplitExpense, type SplitMember, type Person } from '../core/db';
 import { Money } from '../core/money';
@@ -73,13 +74,13 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
 
   const handleAddExpense = async () => {
     if (!activeGroup) return;
-    const aT = parseInt(expenseAmountToman, 10);
-    if (!expenseTitle.trim() || !aT) return;
+    const amount = Money.parseToman(expenseAmountToman);
+    if (!expenseTitle.trim() || !amount) return;
 
     await db.splitExpenses.add({
       groupId: activeGroup.id!,
       title: expenseTitle.trim(),
-      amount: aT * 10,
+      amount,
       payerId: 0,
       at: Date.now(),
       settlement: false,
@@ -139,7 +140,7 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
               <div className="text-right">
                 <span className="text-[10px] text-muted block">مجموع خرج‌ها:</span>
                 <span className="text-sm font-black text-white dir-ltr">
-                  {hidden ? '•••' : Money.group(Math.floor(g.total / 10))}
+                  {hidden ? '•••' : Money.toman(g.total)}
                   <span className="text-[10px] text-muted font-normal mr-1">تومان</span>
                 </span>
               </div>
@@ -157,7 +158,7 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
           <div className="p-4 rounded-[22px] bg-gradient-to-br from-[#1E3F9E] to-surface border border-white/10 text-white">
             <span className="text-xs text-white/70 block">کل هزینه‌های گروه:</span>
             <div className="text-2xl font-black mt-1 dir-ltr">
-              {hidden ? '•••' : Money.group(Math.floor(activeGroup.total / 10))} تومان
+              {hidden ? '•••' : Money.toman(activeGroup.total)} تومان
             </div>
           </div>
 
@@ -170,7 +171,7 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
                   <span className="text-[10px] text-muted">پرداخت‌کننده: من</span>
                 </div>
                 <div className="font-bold text-white dir-ltr">
-                  {Money.group(Math.floor(e.amount / 10))} تومان
+                  {Money.toman(e.amount)} تومان
                 </div>
               </div>
             ))}
@@ -185,7 +186,7 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
 
       {/* Add Group Modal */}
       {isAddGroupOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">ایجاد گروه دنگ جدید</h2>
@@ -217,7 +218,7 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
 
       {/* Add Expense Modal */}
       {isAddExpenseOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">ثبت خرج دونگی</h2>
@@ -238,13 +239,12 @@ export function Splits({ onBack, hidden }: { onBack: () => void; hidden: boolean
             </div>
 
             <div>
-              <label className="text-[11px] text-muted block mb-1">مبلغ کل خرج (تومان)</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <label htmlFor="split-expense-amount" className="text-[11px] text-muted block mb-1">مبلغ کل خرج (تومان)</label>
+              <AmountInput
+                id="split-expense-amount"
                 placeholder="۰"
                 value={expenseAmountToman}
-                onChange={(e) => setExpenseAmountToman(e.target.value.replace(/\D/g, ''))}
+                onChange={setExpenseAmountToman}
                 className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
               />
             </div>

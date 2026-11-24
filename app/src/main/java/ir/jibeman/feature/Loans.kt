@@ -37,12 +37,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ir.jibeman.app
 import ir.jibeman.core.Jalali
 import ir.jibeman.core.Loans
 import ir.jibeman.core.Money
+import ir.jibeman.core.db.Installment
 import ir.jibeman.core.db.InstallmentRow
 import ir.jibeman.core.db.Loan
 import ir.jibeman.ui.BottomSpace
@@ -52,6 +54,7 @@ import ir.jibeman.ui.CircleBtn
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Divider
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.GlassCard
@@ -63,6 +66,7 @@ import ir.jibeman.ui.Label
 import ir.jibeman.ui.LimeButton
 import ir.jibeman.ui.PickField
 import ir.jibeman.ui.Segments
+import ir.jibeman.ui.Segmented
 import ir.jibeman.ui.T
 import ir.jibeman.ui.Tile
 import ir.jibeman.ui.TopBar
@@ -126,6 +130,7 @@ fun LoansScreen(back: () -> Unit, go: (Route) -> Unit) {
 
 @Composable
 fun LoanDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit) {
+    val ctx = LocalContext.current
     val app = app()
     val dao = app.dao
     val hide = app.prefs.hideAmounts
@@ -156,7 +161,7 @@ fun LoanDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit) {
             Group {
                 rows.forEachIndexed { idx, r ->
                     if (idx > 0) Divider()
-                    val paid = r.i.paidTxnId != null
+                    val paid = r.isPaid
                     Row(
                         Modifier.fillMaxWidth().clickable { if (paid) undo = r else paying = r }.padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -177,23 +182,40 @@ fun LoanDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit) {
     }
 
     paying?.let { r ->
-        PayDialog("پرداخت قسط ${Money.fa(r.i.n.toString())}", r.i.amount, l.loan.accountId, onDismiss = { paying = null }) { acc, at ->
-            scope.launch { dao.payInstallment(r.i, acc, at, "قسط ${Money.fa(r.i.n.toString())} · ${l.loan.title}") }
+        PayDialog("پرداخت قسط ${Money.fa(r.i.n.toString())}", r.i.amount, l.loan, onDismiss = { paying = null }) { acc, at ->
+            scope.launch {
+                val paid = dao.payInstallment(r.i.id, acc, at, "قسط ${Money.fa(r.i.n.toString())} · ${l.loan.title}")
+                if (paid == null) Toast.makeText(ctx, "قسط یا حساب پرداخت در دسترس نیست.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
     undo?.let { r ->
-        Confirm("لغو پرداخت", "تراکنش پرداخت این قسط حذف و قسط دوباره «پرداخت‌نشده» می‌شود.", "لغو پرداخت", danger = true,
-            onOk = { scope.launch { r.i.paidTxnId?.let { dao.deleteTxn(it) } } }, onDismiss = { undo = null })
+        val msg = if (r.i.paidTxnId != null) {
+            "تراکنش پرداخت این قسط حذف و مبلغ به حساب برمی‌گردد."
+        } else {
+            "این قسط به عنوان پرداخت‌نشده علامت‌گذاری می‌شود و تغییری در حساب‌ها ایجاد نمی‌شود."
+        }
+        Confirm("لغو پرداخت", msg, "لغو پرداخت", danger = true,
+            onOk = {
+                scope.launch {
+                    if (r.i.paidTxnId != null) {
+                        dao.deleteTxn(r.i.paidTxnId)
+                    } else {
+                        dao.unmarkInstallmentPaid(r.i.id)
+                    }
+                }
+            }, onDismiss = { undo = null })
     }
 }
 
 /** Pick account + date for a payment of a fixed amount. */
 @Composable
-fun PayDialog(title: String, rial: Long, defaultAccount: Long?, onDismiss: () -> Unit, onPay: (accountId: Long, at: Long) -> Unit) {
+private fun PayDialog(title: String, rial: Long, loan: Loan, onDismiss: () -> Unit, onPay: (accountId: Long, at: Long) -> Unit) {
     val dao = app().dao
     val accounts by remember { dao.balances() }.collectAsStateWithLifecycle(emptyList())
-    var acc by remember { mutableLongStateOf(defaultAccount ?: 0) }
-    if (acc == 0L && accounts.isNotEmpty()) acc = accounts.first().account.id
+    var manualAccount by remember { mutableStateOf<Long?>(null) }
+    val availableIds = accounts.map { it.account.id }
+    val acc = manualAccount ?: loan.suggestedPaymentAccount(availableIds) ?: 0L
     var at by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var pick by remember { mutableStateOf(false) }
     AlertDialog(
@@ -202,15 +224,38 @@ fun PayDialog(title: String, rial: Long, defaultAccount: Long?, onDismiss: () ->
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 T("${Money.toman(rial)} تومان", 22, 800)
-                AccountPicker(accounts, acc, "از", Modifier.fillMaxWidth()) { acc = it }
+                AccountPicker(accounts, acc, "برداشت از", Modifier.fillMaxWidth()) { manualAccount = it }
                 PickField(Jalali.longDate(at), Ic.cal) { pick = true }
             }
         },
-        confirmButton = { TextButton({ if (acc != 0L) { onPay(acc, at); onDismiss() } }) { T("ثبت پرداخت", 14, 800, C.accent) } },
+        confirmButton = {
+            TextButton(onClick = { onPay(acc, at); onDismiss() }, enabled = acc in availableIds) {
+                T("ثبت پرداخت", 14, 800, if (acc in availableIds) C.accent else C.muted)
+            }
+        },
         dismissButton = { TextButton(onDismiss) { T("انصراف", 14, 600, C.t2) } },
     )
     // keep the time of day so today's payment sorts after earlier transactions
     if (pick) JDateDialog("تاریخ پرداخت", at, { at = it + (System.currentTimeMillis() - Jalali.dayStart(System.currentTimeMillis())) }) { pick = false }
+}
+
+data class FormScheduleItem(
+    val n: Int,
+    val dueAt: Long,
+    val amount: Long,
+    val isPaid: Boolean,
+    val paidAt: Long? = null,
+    val hasTxn: Boolean = false,
+    val paidTxnId: Long? = null,
+)
+
+private fun computeFirstDueFromNext(nextDueAt: Long, paidCount: Int): Long {
+    val j = Jalali.of(nextDueAt)
+    val totalMonths = j.y * 12 + (j.m - 1) - paidCount
+    val y = totalMonths / 12
+    val m = (totalMonths % 12) + 1
+    val maxD = Jalali.monthDays(y, m)
+    return Jalali.millis(y, m, minOf(j.d, maxD))
 }
 
 @Composable
@@ -222,62 +267,170 @@ fun EditLoanScreen(id: Long, back: () -> Unit) {
     val accounts by remember { dao.balances() }.collectAsStateWithLifecycle(emptyList())
     var original by remember { mutableStateOf<Loan?>(null) }
     var loaded by remember { mutableStateOf(id == 0L) }
+    var mode by remember { mutableStateOf("NEW") } // "NEW" or "ACTIVE"
     var title by remember { mutableStateOf("") }
     var lender by remember { mutableStateOf("") }
     var principal by remember { mutableStateOf("") }
     var installment by remember { mutableStateOf("") }
     var count by remember { mutableStateOf("") }
     var rate by remember { mutableStateOf("") }
-    var first by remember { mutableLongStateOf(Jalali.dayStart(Jalali.addDays(System.currentTimeMillis(), 30))) }
-    var acc by remember { mutableLongStateOf(0) }
+    var paidCountInput by remember { mutableStateOf("0") }
+    var dateTarget by remember { mutableStateOf("FIRST") } // "FIRST" or "NEXT"
+    var baseDate by remember { mutableLongStateOf(Jalali.dayStart(Jalali.addDays(System.currentTimeMillis(), 30))) }
+    var payAccount by remember { mutableLongStateOf(0) }
+    var receiveAccount by remember { mutableLongStateOf(0) }
     var received by remember { mutableStateOf(false) }
     var pickDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var showPlans by remember { mutableStateOf(false) }
     var pickedPlan by remember { mutableStateOf<String?>(null) }
+    var showSchedule by remember { mutableStateOf(false) }
+    var scheduleItems by remember { mutableStateOf<List<FormScheduleItem>>(emptyList()) }
 
     LaunchedEffect(id) {
-        if (id != 0L) dao.loan(id)?.let {
-            original = it; title = it.title; lender = it.lender.orEmpty(); principal = (it.principal / 10).toString()
-            installment = (it.installment / 10).toString(); count = it.count.toString(); first = it.firstDueAt; acc = it.accountId ?: 0
+        if (id != 0L) dao.loan(id)?.let { l ->
+            original = l
+            title = l.title
+            lender = l.lender.orEmpty()
+            principal = Money.tomanInput(l.principal)
+            installment = Money.tomanInput(l.installment)
+            count = l.count.toString()
+            baseDate = l.firstDueAt
+            payAccount = l.accountId ?: 0
+            receiveAccount = l.receiveAccountId ?: 0
+            mode = "ACTIVE"
+
+            val existingInsts = dao.loanInstallments(id)
+            val items = existingInsts.map {
+                val hasTxn = it.paidTxnId != null
+                val isPaid = hasTxn || it.paidAt != null
+                FormScheduleItem(
+                    n = it.n,
+                    dueAt = it.dueAt,
+                    amount = it.amount,
+                    isPaid = isPaid,
+                    paidAt = it.paidAt,
+                    hasTxn = hasTxn,
+                    paidTxnId = it.paidTxnId,
+                )
+            }
+            scheduleItems = items
+            paidCountInput = items.count { it.isPaid }.toString()
         }
         loaded = true
     }
     if (!loaded) return
-    if (acc == 0L && accounts.isNotEmpty()) acc = accounts.first().account.id
     fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
+
+    // Rebuild schedule whenever inputs change for new loans
+    LaunchedEffect(mode, count, installment, baseDate, dateTarget, paidCountInput) {
+        if (original == null) {
+            val n = Money.ascii(count).toIntOrNull() ?: 0
+            val inst = Money.parseToman(installment) ?: 0L
+            val pCount = if (mode == "ACTIVE") (Money.ascii(paidCountInput).toIntOrNull() ?: 0).coerceAtLeast(0) else 0
+            if (n in 1..600 && inst > 0L) {
+                val firstDue = if (mode == "ACTIVE" && dateTarget == "NEXT") computeFirstDueFromNext(baseDate, pCount) else baseDate
+                val defaultList = Loans.schedule(firstDue, n, inst)
+                scheduleItems = defaultList.map { item ->
+                    val paid = mode == "ACTIVE" && item.n <= pCount
+                    FormScheduleItem(
+                        n = item.n,
+                        dueAt = item.dueAt,
+                        amount = item.amount,
+                        isPaid = paid,
+                        paidAt = if (paid) item.dueAt else null,
+                    )
+                }
+            }
+        }
+    }
+
+    // Summary calculations
+    val todayStart = Jalali.dayStart(System.currentTimeMillis())
+    val totalRepayment = scheduleItems.sumOf { it.amount }
+    val paidItems = scheduleItems.filter { it.isPaid }
+    val unpaidItems = scheduleItems.filter { !it.isPaid }
+    val paidCountVal = paidItems.size
+    val paidAmount = paidItems.sumOf { it.amount }
+    val remainingCountVal = unpaidItems.size
+    val remainingAmount = unpaidItems.sumOf { it.amount }
+    val overdueCount = unpaidItems.count { it.dueAt < todayStart }
+    val nextDueItem = unpaidItems.minByOrNull { it.dueAt }
 
     Column(Modifier.fillMaxSize().glowBg()) {
         TopBar(if (id == 0L) "وام جدید" else "ویرایش وام", back)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp)) {
+            // Mode selector (Fresh loan vs Already Active loan)
+            if (id == 0L) {
+                Segmented(listOf("NEW" to "وام تازه", "ACTIVE" to "در حال بازپرداخت"), mode) {
+                    mode = it
+                    if (it == "ACTIVE") {
+                        received = false
+                        if (paidCountInput == "0") paidCountInput = "1"
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             Label("عنوان")
             Field(title, { title = it }, "مثلاً وام خودرو")
             Label("وام‌دهنده (اختیاری)")
             Field(lender, { lender = it }, "مثلاً بانک ملت")
-            Label("مبلغ وام (تومان)")
-            Field(principal, { principal = it }, "۰", number = true)
+            Label(if (mode == "ACTIVE") "مبلغ کل وام (تومان · اختیاری)" else "مبلغ وام (تومان)")
+            AmountField(principal, { principal = it }, "۰")
             Label("از جدول اقساط بانک (سریع‌تر)")
             PlanPickRow(pickedPlan ?: "طرح بانک را انتخاب کن تا قسط و سودش بیاید") { showPlans = true }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) { Label("تعداد اقساط"); Field(count, { count = it }, "مثلاً ۳۶", number = true) }
-                Column(Modifier.weight(1f)) { Label("سود سالانه ٪ (اختیاری)"); Field(rate, { rate = it }, "مثلاً ۲۳", number = true) }
+                Column(Modifier.weight(1f)) { Label("تعداد کل اقساط"); Field(count, { count = it }, "مثلاً ۳۶", number = true) }
+                if (mode == "ACTIVE" && id == 0L) {
+                    Column(Modifier.weight(1f)) {
+                        Label("اقساط پرداخت‌شده قبلی")
+                        Field(paidCountInput, { input ->
+                            val clean = Money.ascii(input).filter { it.isDigit() }
+                            paidCountInput = clean
+                            val pCount = clean.toIntOrNull() ?: 0
+                            scheduleItems = scheduleItems.map { item ->
+                                val paid = item.n <= pCount
+                                item.copy(isPaid = paid, paidAt = if (paid) (item.paidAt ?: item.dueAt) else null)
+                            }
+                        }, "مثلاً ۸", number = true)
+                    }
+                } else {
+                    Column(Modifier.weight(1f)) {
+                        Label("سود سالانه ٪ (اختیاری)")
+                        Field(rate, { rate = it }, "مثلاً ۲۳", number = true, keyboardType = KeyboardType.Decimal)
+                    }
+                }
             }
             Label("مبلغ هر قسط (تومان) · از جدول اقساط بانک")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Field(installment, { installment = it }, "۰", Modifier.weight(1f), number = true)
+                AmountField(installment, { installment = it }, "۰", Modifier.weight(1f))
                 GhostButton("محاسبه", icon = Ic.scale) {
                     val p = Money.parseToman(principal) ?: 0
                     val n = Money.ascii(count).toIntOrNull() ?: 0
                     val r = Money.ascii(rate).replace('٫', '.').toDoubleOrNull() ?: 0.0
-                    if (p <= 0 || n <= 0) toast("اول مبلغ وام و تعداد اقساط را بزن") else installment = (Loans.suggest(p, r, n) / 10).toString()
+                    if (p <= 0 || n <= 0) toast("اول مبلغ وام و تعداد اقساط را بزن") else installment = Money.tomanInput(Loans.suggest(p, r, n))
                 }
             }
             T("«محاسبه» فقط تخمین با فرمول اقساط مساوی است؛ عدد دقیق را از جدول بانک بزن.", 11, color = C.muted, modifier = Modifier.padding(top = 4.dp))
-            Label("سررسید اولین قسط")
-            PickField(Jalali.longDate(first), Ic.cal) { pickDate = true }
-            Label("پرداخت اقساط از حساب")
-            AccountPicker(accounts, acc, null, Modifier.fillMaxWidth()) { acc = it }
-            if (id == 0L) Row(
+
+            if (mode == "ACTIVE" && id == 0L) {
+                Label("مبنای تاریخ اقساط")
+                Segmented(listOf("FIRST" to "سررسید قسط ۱", "NEXT" to "سررسید قسط بعدی"), dateTarget) { dateTarget = it }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Label(if (mode == "ACTIVE" && dateTarget == "NEXT" && id == 0L) "سررسید قسط بعدی" else "سررسید اولین قسط")
+            PickField(Jalali.longDate(baseDate), Ic.cal) { pickDate = true }
+            Label("حساب دریافت وام")
+            AccountPicker(accounts, receiveAccount, null, Modifier.fillMaxWidth(), emptyOption = "تعیین نشده") {
+                receiveAccount = it
+                if (it == 0L) received = false
+            }
+            Label("حساب پیش‌فرض پرداخت اقساط")
+            AccountPicker(accounts, payAccount, null, Modifier.fillMaxWidth(), emptyOption = "حساب دریافت وام در صورت دسترسی") { payAccount = it }
+
+            if (id == 0L && mode == "NEW" && accounts.any { it.account.id == receiveAccount }) Row(
                 Modifier.padding(top = 12.dp).clickable { received = !received }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(
@@ -286,8 +439,136 @@ fun EditLoanScreen(id: Long, back: () -> Unit) {
                 ) { if (received) Ico(Ic.check, 14.dp, C.onLime) }
                 T("مبلغ وام به همین حساب واریز شده (به موجودی اضافه شود)", 12, color = C.t2)
             }
+
+            // Live Preview Summary Card
+            if (scheduleItems.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(C.surface)
+                        .border(1.dp, C.line, RoundedCornerShape(18.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        T("پیش‌نمایش وضعیت بازپرداخت", 12, 700, C.ink)
+                        T("${Money.fa(remainingCountVal.toString())} قسط مانده از ${Money.fa(scheduleItems.size.toString())}", 11, color = C.accent)
+                    }
+                    Divider()
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            T("مجموع بازپرداخت", 10.5f, color = C.muted)
+                            T("${Money.toman(totalRepayment)} تومان", 12, 700, C.ink)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            T("مانده بازپرداخت", 10.5f, color = C.muted)
+                            T("${Money.toman(remainingAmount)} تومان", 12, 700, C.accent)
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            T("پرداخت‌شده (${Money.fa(paidCountVal.toString())} قسط)", 10.5f, color = C.muted)
+                            T("${Money.toman(paidAmount)} تومان", 12, 700, C.ok)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            T("اقساط معوق", 10.5f, color = C.muted)
+                            T(if (overdueCount > 0) "${Money.fa(overdueCount.toString())} قسط معوق" else "ندارد", 12, 700, if (overdueCount > 0) C.bad else C.muted)
+                        }
+                    }
+                    nextDueItem?.let { next ->
+                        Divider()
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            T("سررسید قسط بعدی (${Money.fa(next.n.toString())})", 11, color = C.muted)
+                            T(Jalali.longDate(next.dueAt), 11.5f, 700, C.ink)
+                        }
+                    }
+                }
+            }
+
+            // Collapsible Schedule Table
+            if (scheduleItems.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(C.surface)
+                        .border(1.dp, C.line, RoundedCornerShape(14.dp))
+                        .clickable { showSchedule = !showSchedule }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    T("جدول اقساط (${Money.fa(scheduleItems.size.toString())} قسط)", 12, 600, C.t2)
+                    Ico(if (showSchedule) Ic.chevUp else Ic.chevDown, 16.dp, C.muted)
+                }
+
+                if (showSchedule) {
+                    Column(
+                        Modifier
+                            .padding(top = 8.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(C.sheet)
+                            .border(1.dp, C.line, RoundedCornerShape(16.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        T("روی هر قسط بزن تا وضعیت پرداخت آن تغییر کند:", 10.5f, color = C.muted)
+                        scheduleItems.forEach { item ->
+                            val isOverdue = !item.isPaid && item.dueAt < todayStart
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (item.isPaid) C.ok.copy(alpha = 0.1f) else if (isOverdue) C.bad.copy(alpha = 0.1f) else C.surface)
+                                    .border(1.dp, if (item.isPaid) C.ok.copy(alpha = 0.3f) else if (isOverdue) C.bad.copy(alpha = 0.3f) else C.line, RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        if (item.hasTxn) {
+                                            toast("این قسط دارای تراکنش ثبت‌شده است و تغییر دستی آن ممکن نیست.")
+                                        } else {
+                                            scheduleItems = scheduleItems.map {
+                                                if (it.n == item.n) {
+                                                    val nextPaid = !it.isPaid
+                                                    it.copy(isPaid = nextPaid, paidAt = if (nextPaid) (it.paidAt ?: it.dueAt) else null)
+                                                } else it
+                                            }
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(24.dp)
+                                        .clip(RoundedCornerShape(7.dp))
+                                        .background(if (item.isPaid) C.ok else if (isOverdue) C.bad.copy(alpha = 0.2f) else C.ink.copy(alpha = 0.08f)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (item.isPaid) Ico(Ic.check, 14.dp, C.bg)
+                                    else T(Money.fa(item.n.toString()), 10.5f, 700, if (isOverdue) C.bad else C.t2)
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        T("قسط ${Money.fa(item.n.toString())}", 11.5f, 600, C.ink)
+                                        if (item.isPaid) T("پرداخت‌شده", 9.5f, 700, C.ok)
+                                        else if (isOverdue) T("معوق", 9.5f, 700, C.bad)
+                                    }
+                                    T(Jalali.longDate(item.dueAt), 10.5f, color = C.muted)
+                                }
+                                T("${Money.toman(item.amount)} تومان", 11.5f, 700, if (item.isPaid) C.muted else C.ink)
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(24.dp))
         }
+
         Row(Modifier.navigationBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (original != null) GhostButton("حذف", color = C.bad, icon = Ic.trash) { confirmDelete = true }
             LimeButton("ذخیره", Modifier.weight(1f), Ic.check) {
@@ -299,17 +580,43 @@ fun EditLoanScreen(id: Long, back: () -> Unit) {
                     p == null -> return@LimeButton toast("مبلغ وام فقط عدد")
                     inst == null || inst <= 0 -> return@LimeButton toast("مبلغ قسط را وارد کن")
                     n == null || n !in 1..600 -> return@LimeButton toast("تعداد اقساط بین ۱ تا ۶۰۰")
-                    received && (p <= 0 || acc == 0L) -> return@LimeButton toast("برای واریز، مبلغ وام و حساب لازم است")
+                    received && mode == "NEW" && (p <= 0 || accounts.none { it.account.id == receiveAccount }) -> return@LimeButton toast("برای واریز، مبلغ وام و حساب لازم است")
                 }
+
+                val firstDue = if (mode == "ACTIVE" && dateTarget == "NEXT" && original == null) {
+                    val pCount = (Money.ascii(paidCountInput).toIntOrNull() ?: 0).coerceAtLeast(0)
+                    computeFirstDueFromNext(baseDate, pCount)
+                } else baseDate
+
                 val loan = (original ?: Loan(title = "", lender = null, principal = 0, installment = 0, count = 0, firstDueAt = 0, accountId = null)).copy(
-                    title = title.trim(), lender = lender.trim().ifBlank { null }, principal = p!!, installment = inst!!, count = n!!,
-                    firstDueAt = first, accountId = acc.takeIf { it != 0L },
+                    title = title.trim(), lender = lender.trim().ifBlank { null }, principal = p ?: 0L, installment = inst ?: 0L, count = n ?: 0,
+                    firstDueAt = firstDue, accountId = payAccount.takeIf { it != 0L },
+                    receiveAccountId = receiveAccount.takeIf { it != 0L },
                 )
-                scope.launch { dao.saveLoan(loan, Loans.schedule(first, n, inst), if (received) acc else null); back() }
+
+                val finalSchedule = if (scheduleItems.isNotEmpty()) {
+                    scheduleItems.map {
+                        Installment(
+                            loanId = id,
+                            n = it.n,
+                            dueAt = it.dueAt,
+                            amount = it.amount,
+                            paidTxnId = it.paidTxnId,
+                            paidAt = if (it.isPaid) (it.paidAt ?: it.dueAt) else null,
+                        )
+                    }
+                } else {
+                    Loans.schedule(firstDue, n, inst)
+                }
+
+                scope.launch {
+                    dao.saveLoan(loan, finalSchedule, if (received && mode == "NEW") receiveAccount else null)
+                    back()
+                }
             }
         }
     }
-    if (pickDate) JDateDialog("سررسید اولین قسط", first, { first = it }) { pickDate = false }
+    if (pickDate) JDateDialog(if (mode == "ACTIVE" && dateTarget == "NEXT" && original == null) "سررسید قسط بعدی" else "سررسید اولین قسط", baseDate, { baseDate = it }) { pickDate = false }
     if (showPlans) BankPlanDialog(
         principal = Money.parseToman(principal) ?: 0L,
         months = Money.ascii(count).trim().toIntOrNull() ?: 12,
@@ -317,7 +624,7 @@ fun EditLoanScreen(id: Long, back: () -> Unit) {
         onPick = { r, n, inst, p ->
             rate = r.toString()
             count = n.toString()
-            installment = (inst / 10).toString()
+            installment = Money.tomanInput(inst)
             if (title.isBlank()) title = p.title
             if (lender.isBlank()) lender = p.bankName
             pickedPlan = "${p.title} · ${Money.fa(r.toString())}٪ · ${Money.fa(n.toString())} قسط"

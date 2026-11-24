@@ -2,6 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238C94B8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: left 0.75rem center;
+    background-size: 1rem;
+    padding-left: 2.25rem;
+    padding-right: 0.75rem;
+    color: #ffffff;
+    background-color: #131936;
+  }
+
+  [dir="rtl"] select {
+    background-position: left 0.75rem center;
+    padding-left: 2.25rem;
+    padding-right: 0.75rem;
+  }
+
+  select option {
+    background-color: #141A3D;
+    color: #ffffff;
+    padding: 8px 12px;
+  }
+}
+
 @layer utilities {
   .hero-gradient {
     background: radial-gradient(140% 78% at 50% -6%, #90B8FF 0%, #4A84EE 30%, #1B3883 58%, rgba(5,6,13,0) 86%), #05060D;
@@ -40,10 +68,31 @@
   }
 
   .safe-top {
-    padding-top: max(env(safe-area-inset-top), 16px);
+    padding-top: var(--sat);
   }
 
-  .safe-bottom {
-    padding-bottom: max(env(safe-area-inset-bottom), 84px);
+  .safe-dialog {
+    padding: 1rem;
+    padding: max(1rem, var(--sat)) max(1rem, var(--sar)) max(1rem, var(--sab)) max(1rem, var(--sal));
+  }
+
+  :where(.safe-dialog > :first-child) {
+    max-height: 100%;
+    overflow-y: auto;
+  }
+
+  .safe-sheet {
+    padding: var(--sat) var(--sar) 0 var(--sal);
+  }
+
+  .safe-sheet > :first-child {
+    max-height: min(92vh, 100%);
+    padding-bottom: calc(2rem + var(--sab));
+  }
+
+  .safe-lock {
+    padding: 1.5rem;
+    padding: calc(1.5rem + var(--sat)) max(1.5rem, var(--sar))
+      calc(1.5rem + var(--sab)) max(1.5rem, var(--sal));
   }
 }

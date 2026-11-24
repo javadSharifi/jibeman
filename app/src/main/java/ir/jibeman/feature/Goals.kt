@@ -49,6 +49,7 @@ import ir.jibeman.ui.CatIcon
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Divider
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.Group
@@ -124,7 +125,7 @@ private fun GoalDialog(g: Goal, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var title by remember { mutableStateOf(g.title) }
-    var target by remember { mutableStateOf(if (g.target > 0) (g.target / 10).toString() else "") }
+    var target by remember { mutableStateOf(if (g.target > 0) Money.tomanInput(g.target) else "") }
     var due by remember { mutableStateOf(g.dueAt) }
     var icon by remember { mutableStateOf(g.icon) }
     var color by remember { mutableIntStateOf(g.color) }
@@ -135,8 +136,7 @@ private fun GoalDialog(g: Goal, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field(title, { title = it }, "مثلاً سفر نوروز")
-                Field(target, { target = it }, "مبلغ هدف (تومان)", number = true)
-                Money.parseToman(target)?.takeIf { it > 0 }?.let { T(Money.words(it / 10) + " تومان", 11, color = C.muted) }
+                AmountField(target, { target = it }, "مبلغ هدف (تومان)")
                 PickField(due?.let { "تا ${Jalali.longDate(it)}" } ?: "تاریخ هدف (اختیاری)", Ic.cal, muted = due == null) { pick = true }
                 Label("آیکون و رنگ")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -237,14 +237,8 @@ fun AmountDialog(title: String, max: Long?, onDismiss: () -> Unit, onOk: (Long) 
         title = { T(title, 16, 800) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Field(text, { text = it }, "مبلغ (تومان)", number = true)
-                T(
-                    when {
-                        a != null -> Money.words(a / 10) + " تومان"
-                        max != null -> "حداکثر ${Money.toman(max)} تومان"
-                        else -> ""
-                    }, 11, color = C.muted,
-                )
+                AmountField(text, { text = it }, "مبلغ (تومان)")
+                if (a == null && max != null) T("حداکثر ${Money.toman(max)} تومان", 11, color = C.muted)
             }
         },
         confirmButton = { TextButton({ if (a != null) { onOk(a); onDismiss() } }) { T("ثبت", 14, 800, if (a != null) C.accent else C.muted) } },

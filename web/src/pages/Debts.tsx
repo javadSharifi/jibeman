@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { AmountInput } from '../components/AmountInput';
 import { Plus, X, HandCoins, Check, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { db, type Debt, type DebtPayment, type Account } from '../core/db';
 import { Money } from '../core/money';
 import { Jalali } from '../core/jalali';
 import { HeaderBar } from '../components/UI';
+import { Select } from '../components/Select';
 
 interface DebtWithRemaining extends Debt {
   remaining: number;
@@ -48,7 +50,7 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
   }, [direction]);
 
   const handleSaveDebt = async () => {
-    const amt = parseInt(amountToman, 10);
+    const amt = Money.parseToman(amountToman);
     if (!person.trim() || !amt) {
       alert('لطفاً نام شخص و مبلغ را وارد کنید');
       return;
@@ -57,7 +59,7 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
     await db.debts.add({
       direction,
       person: person.trim(),
-      amount: amt * 10,
+      amount: amt,
       note: note.trim() || undefined,
       createdAt: Date.now(),
     });
@@ -71,10 +73,11 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
   const handleAddPayment = async () => {
     if (!payTargetDebt) return;
-    const pAmt = parseInt(payAmountToman, 10);
-    if (!pAmt) return;
-
-    const rial = pAmt * 10;
+    const rial = Money.parseToman(payAmountToman);
+    if (!rial || rial > payTargetDebt.remaining) {
+      alert('مبلغ پرداخت باید بیشتر از صفر و حداکثر برابر با مانده باشد.');
+      return;
+    }
     const incoming = payTargetDebt.direction === 'OWED_TO_ME';
 
     let txnId: number | undefined;
@@ -161,7 +164,7 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
               <div className="flex flex-col items-end">
                 <div className="text-sm font-black text-white dir-ltr">
-                  {hidden ? '•••' : Money.group(Math.floor(d.remaining / 10))}
+                  {hidden ? '•••' : Money.toman(d.remaining)}
                   <span className="text-[10px] text-muted font-normal mr-1">تومان</span>
                 </div>
 
@@ -169,7 +172,7 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                   <button
                     onClick={() => {
                       setPayTargetDebt(d);
-                      setPayAmountToman(String(Math.floor(d.remaining / 10)));
+                      setPayAmountToman(Money.tomanInput(d.remaining));
                     }}
                     className="text-[10.5px] text-sky font-bold hover:underline mt-1"
                   >
@@ -192,7 +195,7 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
       {/* Add Debt Modal */}
       {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">
@@ -215,13 +218,12 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
             </div>
 
             <div>
-              <label className="text-[11px] text-muted block mb-1">مبلغ (تومان)</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <label htmlFor="debt-amount" className="text-[11px] text-muted block mb-1">مبلغ (تومان)</label>
+              <AmountInput
+                id="debt-amount"
                 placeholder="۰"
                 value={amountToman}
-                onChange={(e) => setAmountToman(e.target.value.replace(/\D/g, ''))}
+                onChange={setAmountToman}
                 className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
               />
             </div>
@@ -249,7 +251,7 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
       {/* Pay / Settle Modal */}
       {payTargetDebt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">
@@ -261,27 +263,28 @@ export function Debts({ onBack, hidden }: { onBack: () => void; hidden: boolean 
             </div>
 
             <div>
-              <label className="text-[11px] text-muted block mb-1">مبلغ پرداختی (تومان)</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <label htmlFor="debt-payment-amount" className="text-[11px] text-muted block mb-1">مبلغ پرداختی (تومان)</label>
+              <AmountInput
+                id="debt-payment-amount"
                 value={payAmountToman}
-                onChange={(e) => setPayAmountToman(e.target.value.replace(/\D/g, ''))}
+                onChange={setPayAmountToman}
                 className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
               />
             </div>
 
             <div>
               <label className="text-[11px] text-muted block mb-1">حساب مرتبط</label>
-              <select
-                value={selectedAccId || ''}
-                onChange={(e) => setSelectedAccId(Number(e.target.value))}
-                className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-              >
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
+              <Select
+                value={selectedAccId || undefined}
+                onChange={(val) => setSelectedAccId(Number(val))}
+                options={accounts
+                  .filter((a): a is Account & { id: number } => a.id != null)
+                  .map(a => ({
+                    value: a.id,
+                    label: a.name,
+                  }))}
+                placeholder="انتخاب حساب"
+              />
             </div>
 
             <button

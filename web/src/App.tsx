@@ -115,6 +115,7 @@ export function App() {
             onOpenSmartPaste={() => setIsSmartPasteOpen(true)}
             onNavigateTab={handleTabChange}
             onOpenAccountDetail={handleSelectAccount}
+            onNavigateSubRoute={(r) => setSubRoute(r)}
           />
         );
       case 1:
@@ -128,13 +129,12 @@ export function App() {
     }
   };
 
+  if (isLocked) return <LockScreen onUnlock={() => setIsLocked(false)} />;
+
   return (
     <div className="min-h-screen bg-bg text-white max-w-md mx-auto relative flex flex-col selection:bg-lime selection:text-onLime">
-      {/* App Lock Screen Overlay */}
-      {isLocked && <LockScreen onUnlock={() => setIsLocked(false)} />}
-
       {/* Page Content */}
-      <main className="flex-1">
+      <main className="flex-1 safe-top">
         {renderContent()}
       </main>
 

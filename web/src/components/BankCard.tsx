@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, Check, Eye, EyeOff, Radio, Edit2 } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff, Radio, Edit2, Pencil, Trash2 } from 'lucide-react';
 import { getBankByCode, type Bank } from '../core/banks';
 import { BankKit } from '../core/bankKit';
 import { Money } from '../core/money';
@@ -11,8 +11,10 @@ interface BankCardProps {
   hidden?: boolean;
   onClick?: () => void;
   onEdit?: () => void;
-  variant?: 'mini' | 'large';
+  onDelete?: () => void;
+  variant?: 'mini' | 'large' | 'compact';
   interactive?: boolean;
+  revealDetails?: boolean;
 }
 
 export function BankLogoBadge({
@@ -56,15 +58,17 @@ export function BankCard({
   hidden = false,
   onClick,
   onEdit,
+  onDelete,
   variant = 'mini',
   interactive = true,
+  revealDetails = false,
 }: BankCardProps) {
   const bank = getBankByCode(account.bankCode) || BankKit.detectByCard(account.cardNumber);
   const primaryColor = account.cardColor || bank?.color || '#1F5FD6';
   const gradientEnd = bank?.gradientEnd || '#0E3EA3';
 
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
-  const [showCvv, setShowCvv] = useState(false);
+  const [showCvv, setShowCvv] = useState(true);
 
   const copyToClipboard = (e: React.MouseEvent, text: string, itemKey: string) => {
     e.stopPropagation();
@@ -74,18 +78,19 @@ export function BankCard({
   };
 
   const panDigits = BankKit.cleanDigits(account.cardNumber);
-  const displayPan = panDigits.length === 16
-    ? BankKit.formatCardNumber(panDigits)
-    : panDigits.length > 0
-    ? panDigits.match(/.{1,4}/g)?.join(' ') || panDigits
-    : '•••• •••• •••• ••••';
+  const pan = panDigits;
+  const displayPan = hidden
+    ? `•••• •••• •••• ${account.last4 || '••••'}`
+    : panDigits
+    ? (panDigits.length === 16 ? BankKit.formatCardNumber(panDigits) : panDigits.replace(/(.{4})/g, '$1 ').trim())
+    : `•••• •••• •••• ${account.last4 || '••••'}`;
 
   if (variant === 'mini') {
     return (
       <div
         onClick={onClick}
-        role="button"
-        tabIndex={0}
+        role={onClick ? 'button' : undefined}
+        tabIndex={onClick ? 0 : undefined}
         className="w-[146px] h-[134px] rounded-[20px] p-3 flex flex-col justify-between shrink-0 relative overflow-hidden border border-white/20 shadow-card cursor-pointer active:scale-95 transition-transform text-white select-none"
         style={{
           background: `radial-gradient(75% 60% at 20% 0%, rgba(255,255,255,0.45), transparent 70%), linear-gradient(150deg, ${primaryColor} 0%, ${gradientEnd} 100%)`,
@@ -93,11 +98,18 @@ export function BankCard({
       >
         <div className="flex items-center justify-between z-10">
           <BankLogoBadge bank={bank} size={30} />
-          {account.last4 && (
-            <div className="text-[10px] px-2 py-0.5 rounded-[8px] bg-white/20 font-mono tracking-wider font-semibold">
-              *{Money.fa(account.last4)}
-            </div>
-          )}
+          <div className="flex items-center gap-1">
+            {account.isSavings && (
+              <div className="text-[9px] px-1.5 py-0.5 rounded-[6px] bg-lime text-onLime font-bold shadow-sm">
+                پس‌انداز
+              </div>
+            )}
+            {account.last4 && (
+              <div className="text-[10px] px-2 py-0.5 rounded-[8px] bg-white/20 font-mono tracking-wider font-semibold">
+                *{Money.fa(account.last4)}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="z-10 mt-auto">
@@ -105,7 +117,7 @@ export function BankCard({
             {account.name}
           </div>
           <div className="text-base font-extrabold mt-0.5 tracking-tight">
-            {hidden ? Money.HIDDEN : Money.group(Math.floor(account.balance / 10))}
+            {hidden ? Money.HIDDEN : Money.toman(account.balance)}
             <span className="text-[10px] font-normal opacity-75 mr-1">تومان</span>
           </div>
         </div>
@@ -113,32 +125,171 @@ export function BankCard({
     );
   }
 
-  // Realistic Large Bank Card variant
+  // Compact Bank Card variant (FinPay / Shetab Card Action Design)
+  if (variant === 'compact') {
+    return (
+      <article
+        onClick={onClick}
+        role={onClick ? 'button' : undefined}
+        tabIndex={onClick ? 0 : undefined}
+        className="w-full rounded-[24px] p-5 flex flex-col gap-4 relative overflow-hidden border border-white/20 shadow-card text-white select-none transition-all active:scale-[0.99] hover:border-white/35 cursor-pointer"
+        style={{
+          background: `radial-gradient(85% 65% at 15% 0%, rgba(255,255,255,0.28), transparent 75%), linear-gradient(140deg, ${primaryColor} 0%, ${gradientEnd} 100%)`,
+        }}
+      >
+        {/* 1. Header: Bank Logo, Names, Badges, and Action Buttons (Edit, Delete) */}
+        <header className="flex items-center justify-between gap-2 z-10">
+          <div className="flex items-center gap-3 min-w-0">
+            <BankLogoBadge bank={bank} size={42} />
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-base text-white truncate">
+                  {account.name || (bank ? `بانک ${bank.name}` : 'حساب بانکی')}
+                </h3>
+                {account.isSavings && (
+                  <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-lime text-onLime font-black shadow-sm shrink-0">
+                    پس‌انداز
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-white/75 truncate mt-0.5">
+                {bank ? `کارت شتابی • ${bank.name}` : account.type === 'CASH' ? 'کیف پول نقدی' : 'حساب بانکی'}
+              </p>
+            </div>
+          </div>
+
+          {/* Action buttons (Edit, Delete) in header */}
+          <div className="flex items-center gap-1.5 shrink-0 z-20">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+                aria-label="ویرایش کارت"
+                title="ویرایش کارت"
+                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 text-white transition-all active:scale-95 border border-white/10 shadow-sm"
+              >
+                <Pencil size={15} />
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                aria-label="حذف کارت"
+                title="حذف کارت"
+                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-black/25 hover:bg-bad/30 text-bad/90 hover:text-bad transition-all active:scale-95 border border-white/10 shadow-sm"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* 2. Balance Row */}
+        <div className="flex items-center justify-between gap-2 z-10 pt-1">
+          <span className="text-xs text-white/80 font-medium">موجودی کارت</span>
+          <p className="text-2xl font-black text-white dir-ltr">
+            {hidden ? Money.HIDDEN : Money.toman(account.balance)}
+            <span className="text-xs font-normal text-white/80 mr-1">تومان</span>
+          </p>
+        </div>
+
+        {/* 3. Card Number Bar & Copy Button */}
+        {panDigits && (
+          <div className="flex items-center justify-between gap-2 bg-black/35 rounded-xl px-4 py-3 border border-white/10 z-10">
+            <button
+              type="button"
+              onClick={(e) => copyToClipboard(e, panDigits, 'pan')}
+              aria-label="کپی شماره کارت"
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-white/90 hover:text-white transition-opacity shrink-0 active:scale-95"
+            >
+              {copiedItem === 'pan' ? (
+                <Check size={16} className="text-lime" />
+              ) : (
+                <Copy size={16} />
+              )}
+              <span>{copiedItem === 'pan' ? 'کپی شد' : 'کپی'}</span>
+            </button>
+            <p className="font-mono text-sm sm:text-base tracking-[2px] text-white font-extrabold dir-ltr select-all">
+              {Money.fa(displayPan)}
+            </p>
+          </div>
+        )}
+
+        {/* 4. Expiry & CVV2 Footer */}
+        {(account.cardExpiry || account.cardCvv2) && (
+          <footer className="flex items-center justify-between gap-4 pt-3 border-t border-white/20 text-xs z-10">
+            {account.cardExpiry && (
+              <div className="flex items-center gap-1.5 font-mono text-white/90 dir-ltr">
+                <span className="text-white/60 font-sans text-[11px]">EXP:</span>
+                <span className="font-bold text-xs">
+                  {hidden ? '••/••' : Money.fa(BankKit.formatExpiry(account.cardExpiry))}
+                </span>
+              </div>
+            )}
+
+            {account.cardCvv2 && (
+              <div className="flex items-center gap-2 font-mono text-white/90 dir-ltr">
+                <span className="text-white/60 font-sans text-[11px]">CVV2:</span>
+                <span className="font-bold text-xs">
+                  {showCvv ? (hidden ? '•••' : Money.fa(account.cardCvv2)) : '••••'}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowCvv((prev) => !prev);
+                  }}
+                  aria-label="نمایش یا مخفی کردن CVV2"
+                  className="inline-flex items-center justify-center text-white/70 hover:text-white transition-colors"
+                >
+                  {showCvv ? <Eye size={15} /> : <EyeOff size={15} />}
+                </button>
+              </div>
+            )}
+          </footer>
+        )}
+      </article>
+    );
+  }
+
+  // Minimal Sleek Large Bank Card variant
   return (
     <div
       onClick={onClick}
-      role="button"
-      tabIndex={0}
-      className="w-full rounded-[26px] p-5 flex flex-col justify-between relative overflow-hidden border border-white/30 shadow-[0_18px_36px_rgba(8,25,80,0.5)] cursor-pointer text-white select-none transition-all active:scale-[0.99]"
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      className="w-full rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden border border-white/20 shadow-card cursor-pointer text-white select-none transition-transform active:scale-[0.99]"
       style={{
-        background: `radial-gradient(85% 65% at 15% 0%, rgba(255,255,255,0.45), transparent 75%), linear-gradient(145deg, ${primaryColor} 0%, ${gradientEnd} 100%)`,
+        background: `radial-gradient(85% 65% at 15% 0%, rgba(255,255,255,0.35), transparent 75%), linear-gradient(140deg, ${primaryColor} 0%, ${gradientEnd} 100%)`,
       }}
     >
-      {/* 1. Header: Logo, Name & Contactless Wave */}
+      {/* 1. Header: Logo, Bank & Account Name, Badges & Actions */}
       <div className="flex items-center justify-between z-10">
-        <div className="flex items-center gap-3">
-          <BankLogoBadge bank={bank} size={40} />
-          <div>
-            <div className="text-sm font-bold text-white flex items-center gap-1.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <BankLogoBadge bank={bank} size={32} />
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-white flex items-center gap-1.5 truncate">
               <span>{bank ? `بانک ${bank.name}` : account.name}</span>
+              {account.isSavings && (
+                <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-lime text-onLime font-black shadow-sm shrink-0">
+                  پس‌انداز
+                </span>
+              )}
             </div>
             {bank && account.name !== bank.name && (
-              <div className="text-[11px] text-white/80">{account.name}</div>
+              <div className="text-[11px] text-white/75 truncate">{account.name}</div>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           {onEdit && (
             <button
               type="button"
@@ -147,107 +298,106 @@ export function BankCard({
                 onEdit();
               }}
               title="ویرایش مشخصات کارت"
-              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-bold transition-all active:scale-95 border border-white/25 shadow-sm"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold transition-colors active:scale-95 border border-white/20 shadow-sm"
             >
-              <Edit2 size={13} />
+              <Edit2 size={11} />
               <span>ویرایش</span>
             </button>
           )}
-          {/* Contactless / NFC indicator */}
-          <div className="flex items-center gap-1 text-white/80" title="Contactless / شتاب">
-            <Radio size={22} className="rotate-90" />
+          <div className="flex items-center text-white/60" title="Contactless / شتاب">
+            <Radio size={16} className="rotate-90" />
           </div>
         </div>
       </div>
 
-      {/* 2. Chip & Shetab Row */}
-      <div className="flex items-center justify-between z-10 mt-4 mb-2">
-        <EmvChip className="w-11 h-8 shadow-sm" />
-        <span className="text-xs font-bold text-white/80 tracking-wider">شتاب</span>
-      </div>
-
-      {/* 3. Embossed 16-Digit Card Number with Copy Action */}
+      {/* 2. Middle: Embossed / Masked Card Number */}
       <div className="z-10 my-2">
         <div
-          onClick={(e) => panDigits.length >= 16 && copyToClipboard(e, panDigits, 'pan')}
-          className="flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-white/10 active:bg-white/20 transition-colors"
+          onClick={(e) => {
+            if (pan.length === 16) {
+              copyToClipboard(e, pan, 'pan');
+            }
+          }}
+          className={`flex items-center justify-between px-2 py-1 rounded-lg transition-colors ${
+            pan.length === 16 ? 'hover:bg-white/10 cursor-pointer' : ''
+          }`}
         >
-          <div className="font-mono text-xl sm:text-[22px] tracking-[3px] text-white font-extrabold dir-ltr">
+          <div className="font-mono text-base sm:text-lg tracking-[2px] text-white font-extrabold dir-ltr">
             {Money.fa(displayPan)}
           </div>
-          {panDigits.length >= 16 && (
-            <button className="text-white/80 hover:text-white mr-2">
-              {copiedItem === 'pan' ? <Check size={16} className="text-lime" /> : <Copy size={16} />}
+          {pan.length === 16 && (
+            <button type="button" aria-label="کپی شماره کارت" className="text-white/80 hover:text-white">
+              {copiedItem === 'pan' ? <Check size={14} className="text-lime" /> : <Copy size={14} />}
             </button>
           )}
         </div>
       </div>
 
-      {/* 4. Bottom Info: Expiry, CVV2, Card Type */}
-      <div className="flex items-end justify-between z-10 pt-2 border-t border-white/15">
-        <div className="flex items-center gap-4">
-          {account.cardExpiry && (
-            <div>
-              <span className="text-[9px] text-white/70 block font-medium">انقضا</span>
-              <span className="text-xs font-bold font-mono dir-ltr">
-                {Money.fa(BankKit.formatExpiry(account.cardExpiry))}
-              </span>
-            </div>
-          )}
-
-          {account.cardCvv2 && (
-            <div>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] text-white/70 font-medium">CVV2</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowCvv(prev => !prev);
-                  }}
-                  className="text-white/70 hover:text-white"
-                >
-                  {showCvv ? <EyeOff size={11} /> : <Eye size={11} />}
-                </button>
-              </div>
-              <span
-                onClick={(e) => copyToClipboard(e, account.cardCvv2!, 'cvv')}
-                className="text-xs font-bold font-mono dir-ltr cursor-pointer hover:underline"
-              >
-                {showCvv ? Money.fa(account.cardCvv2) : '•••'}
-              </span>
-            </div>
-          )}
-        </div>
-
+      {/* 3. Bottom: Balance on one side, Expiry / CVV / Shetab on other side */}
+      <div className="z-10 pt-2 border-t border-white/15 flex items-end justify-between">
         <div>
-          <span className="text-[9.5px] text-white/75 font-mono uppercase tracking-widest block">
-            {account.type === 'BANK' ? 'DEBIT CARD' : account.type}
-          </span>
+          <span className="text-[10px] text-white/70 block">موجودی</span>
+          <div className="text-base sm:text-lg font-black dir-ltr">
+            {hidden ? Money.HIDDEN : Money.toman(account.balance)}
+            <span className="text-[10px] font-normal text-white/80 mr-1">تومان</span>
+          </div>
         </div>
+
+        {(account.cardExpiry || account.cardCvv2) ? (
+          <div className="flex items-center gap-3 dir-ltr">
+            {account.cardExpiry && (
+              <div>
+                <span className="text-[9px] text-white/70 block font-medium">انقضا</span>
+                <bdi className="text-xs font-bold font-mono inline-block">
+                  {hidden ? '••/••' : Money.fa(BankKit.formatExpiry(account.cardExpiry))}
+                </bdi>
+              </div>
+            )}
+            {account.cardCvv2 && (
+              <div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] text-white/70 font-medium">CVV2</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowCvv(prev => !prev);
+                    }}
+                    className="text-white/70 hover:text-white"
+                  >
+                    {showCvv ? <EyeOff size={10} /> : <Eye size={10} />}
+                  </button>
+                </div>
+                <bdi
+                  onClick={(e) => {
+                    if (showCvv) copyToClipboard(e, account.cardCvv2!, 'cvv');
+                  }}
+                  className="text-xs font-bold font-mono cursor-pointer hover:underline inline-block"
+                >
+                  {showCvv ? (hidden ? '•••' : Money.fa(account.cardCvv2)) : '•••'}
+                </bdi>
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="text-[9px] text-white/60 font-mono uppercase tracking-wider">
+            {account.type === 'BANK' ? 'SHETAB' : account.type}
+          </span>
+        )}
       </div>
 
-      {/* 5. Optional IBAN bar */}
-      {account.iban && (
+      {/* 4. Optional IBAN bar */}
+      {revealDetails && account.iban && (
         <div
           onClick={(e) => copyToClipboard(e, `IR${BankKit.cleanDigits(account.iban)}`, 'iban')}
-          className="z-10 mt-3 pt-2 border-t border-white/15 flex items-center justify-between text-xs font-mono text-white/90 dir-ltr px-1 hover:bg-white/5 rounded-lg transition-colors"
+          className="z-10 mt-2 pt-1.5 border-t border-white/10 flex items-center justify-between text-[11px] font-mono text-white/90 dir-ltr px-1 hover:bg-white/5 rounded transition-colors cursor-pointer"
         >
           <span>{BankKit.formatIban(account.iban)}</span>
           <button className="text-white/80 ml-2">
-            {copiedItem === 'iban' ? <Check size={14} className="text-lime" /> : <Copy size={14} />}
+            {copiedItem === 'iban' ? <Check size={12} className="text-lime" /> : <Copy size={12} />}
           </button>
         </div>
       )}
-
-      {/* 6. Usable Balance */}
-      <div className="z-10 mt-3 pt-2 border-t border-white/20 flex items-baseline justify-between">
-        <span className="text-[11px] text-white/80">موجودی حساب</span>
-        <div className="text-lg font-black dir-ltr">
-          {hidden ? Money.HIDDEN : Money.group(Math.floor(account.balance / 10))}
-          <span className="text-[10px] font-normal text-white/80 mr-1.5">تومان</span>
-        </div>
-      </div>
     </div>
   );
 }

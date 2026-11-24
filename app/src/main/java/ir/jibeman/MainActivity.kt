@@ -2,12 +2,15 @@ package ir.jibeman
 
 import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
@@ -31,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import ir.jibeman.feature.AccountDetailScreen
 import ir.jibeman.feature.AccountsScreen
 import ir.jibeman.feature.AddReq
@@ -61,11 +65,45 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.rememberCoroutineScope
 import ir.jibeman.ui.PinDots
 import ir.jibeman.ui.PinKeypad
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     private var locked by mutableStateOf(false)
     private var stoppedAt = 0L
+
+    // Keep the document pickers alive when the app locks while the system picker is open.
+    private var pendingBackupExport: String? = null
+    var backupImport by mutableStateOf<Uri?>(null)
+        private set
+    private val backupExporter = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val payload = pendingBackupExport
+        pendingBackupExport = null
+        if (uri != null && payload != null) lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    checkNotNull(contentResolver.openOutputStream(uri, "wt")).use { it.write(payload.encodeToByteArray()) }
+                }
+                (application as App).prefs.lastBackupAt = System.currentTimeMillis()
+                Toast.makeText(this@MainActivity, "پشتیبان رمزنگاری‌شده ذخیره شد.", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {
+                Toast.makeText(this@MainActivity, "ذخیرهٔ فایل پشتیبان ممکن نشد.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    private val backupImporter = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        backupImport = uri
+    }
+
+    fun saveBackupFile(name: String, encrypted: String) {
+        pendingBackupExport = encrypted
+        backupExporter.launch(name)
+    }
+
+    fun chooseBackupFile() = backupImporter.launch(arrayOf("application/json", "application/octet-stream", "text/plain"))
+
+    fun dismissBackupImport() { backupImport = null }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
@@ -85,7 +123,7 @@ class MainActivity : FragmentActivity() {
         locked = app.prefs.lockEnabled && app.prefs.hasPin
         setContent {
             JibeTheme(app.prefs.theme) {
-                if (locked) LockScreen(this) { locked = false } else AppRoot()
+                if (locked) LockScreen(this) { locked = false } else AppRoot(this@MainActivity)
             }
         }
     }
@@ -204,12 +242,18 @@ private fun LockScreen(activity: FragmentActivity, unlock: () -> Unit) {
 }
 
 @Composable
-private fun AppRoot() {
+private fun AppRoot(activity: MainActivity) {
     var stack by remember { mutableStateOf(listOf<Route>(Route.Home)) }
     var sheet by remember { mutableStateOf<AddReq?>(null) }
     val top = stack.last()
     fun go(r: Route) { stack = if (r.tab >= 0) listOf(r) else stack + r }
-    fun back() { stack = if (stack.size > 1) stack.dropLast(1) else listOf(Route.Home) }
+    fun back() {
+        if (stack.last() == Route.Backup) activity.dismissBackupImport()
+        stack = if (stack.size > 1) stack.dropLast(1) else listOf(Route.Home)
+    }
+    LaunchedEffect(activity.backupImport) {
+        if (activity.backupImport != null && stack.last() != Route.Backup) go(Route.Backup)
+    }
     BackHandler(stack.size > 1 || top != Route.Home) { back() }
 
     Box(Modifier.fillMaxSize().background(C.bg)) {
@@ -221,7 +265,7 @@ private fun AppRoot() {
             is Route.AccountDetail -> AccountDetailScreen(top.id, ::back, ::go) { sheet = it }
             is Route.EditAccount -> EditAccountScreen(top.id, ::back)
             Route.Categories -> CategoriesScreen(::back)
-            Route.Backup -> BackupScreen(::back)
+            Route.Backup -> BackupScreen(activity, ::back)
             Route.Security -> SecurityScreen(::back)
             Route.SmsReview -> SmsReviewScreen(::back) { sheet = it }
             Route.Loans -> ir.jibeman.feature.LoansScreen(::back, ::go)

@@ -317,7 +317,7 @@ function PinModal({ title, mode, onSuccess, onClose }: PinModalProps) {
   const FA_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/80 backdrop-blur-sm animate-fade-in">
       <div className="w-full max-w-xs bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-4 text-center">
         <div className="flex items-center justify-between border-b border-line pb-2">
           <h2 className="text-sm font-bold text-white">{title}</h2>

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X, Delete, ArrowLeftRight, Check } from 'lucide-react';
 import { db, type Account, type Category } from '../core/db';
 import { Money } from '../core/money';
+import { AmountInput } from './AmountInput';
+import { Select } from './Select';
 import { CategoryIcon } from './UI';
 
 interface QuickAddProps {
@@ -18,6 +20,7 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
   const [selectedAccId, setSelectedAccId] = useState<number | null>(null);
   const [selectedToAccId, setSelectedToAccId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
+  const [returnCommitment, setReturnCommitment] = useState(true);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -27,6 +30,7 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
       setType(defaultType);
       setAmountStr('');
       setTitle('');
+      setReturnCommitment(true);
 
       // Load data
       db.accounts.filter(a => !a.archived).sortBy('sortOrder').then(accs => {
@@ -50,14 +54,16 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
 
   if (!isOpen) return null;
 
-  const toman = parseInt(amountStr, 10) || 0;
-  const rial = toman * 10;
-  const words = toman > 0 ? `${Money.words(toman)} تومان` : '';
+  const rial = Money.parseToman(amountStr) ?? 0;
+  const selectedAcc = accounts.find(a => a.id === selectedAccId);
+  const targetAcc = accounts.find(a => a.id === selectedToAccId);
+  const isWithdrawalFromSavings = Boolean(selectedAcc?.isSavings && (type === 'EXPENSE' || (type === 'TRANSFER' && !targetAcc?.isSavings)));
 
   const handleDigit = (d: string) => {
-    if (amountStr.length >= 12) return;
-    if (amountStr === '' && (d === '0' || d === '000')) return;
-    setAmountStr(prev => prev + d);
+    setAmountStr(prev => {
+      if (!prev && (d === '0' || d === '000')) return prev;
+      return Money.normalizeAmountInput(prev + d, 12) ?? prev;
+    });
   };
 
   const handleDelete = () => {
@@ -67,12 +73,13 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
   const handleSave = async () => {
     if (rial <= 0 || !selectedAccId) return;
 
+    let txnId: number;
     if (type === 'TRANSFER') {
       if (!selectedToAccId || selectedAccId === selectedToAccId) {
         alert('لطفاً دو حساب متفاوت برای انتقال انتخاب کنید');
         return;
       }
-      await db.txns.add({
+      txnId = await db.txns.add({
         type: 'TRANSFER',
         amount: rial,
         accountId: selectedAccId,
@@ -83,7 +90,7 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
         createdAt: Date.now(),
       });
     } else {
-      await db.txns.add({
+      txnId = await db.txns.add({
         type,
         amount: rial,
         accountId: selectedAccId,
@@ -95,13 +102,24 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
       });
     }
 
+    if (isWithdrawalFromSavings && returnCommitment) {
+      await db.savingsCommitments.add({
+        accountId: selectedAccId,
+        txnId,
+        amount: rial,
+        paidAmount: 0,
+        note: title || (type === 'TRANSFER' ? 'انتقال از پس‌انداز' : 'برداشت از پس‌انداز'),
+        createdAt: Date.now(),
+      });
+    }
+
     onClose();
     if (onSuccess) onSuccess();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md bg-sheet rounded-t-[32px] border-t border-white/10 p-4 pb-8 flex flex-col max-h-[92vh] overflow-y-auto no-scrollbar">
+    <div className="fixed inset-0 z-50 flex items-end justify-center safe-sheet bg-black/70 backdrop-blur-sm animate-fade-in">
+      <div className="w-full max-w-md bg-sheet rounded-t-[32px] border-t border-white/10 p-4 flex flex-col overflow-y-auto no-scrollbar">
         {/* Handle bar & Close */}
         <div className="flex items-center justify-between pb-2">
           <div className="w-10 h-1.5 rounded-full bg-white/20 mx-auto" />
@@ -146,15 +164,11 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
 
         {/* Large Amount Display */}
         <div className="flex flex-col items-center justify-center py-4">
-          <div className="flex items-baseline gap-2 dir-ltr">
-            <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-              {amountStr ? Money.group(toman) : '۰'}
-            </span>
-            <span className="text-sm font-medium text-muted">تومان</span>
-          </div>
-          <div className="text-xs text-muted mt-1 h-5 text-center px-4 truncate">
-            {words}
-          </div>
+          <label htmlFor="quick-add-amount" className="text-xs font-medium text-muted">مبلغ (تومان)</label>
+          <AmountInput id="quick-add-amount" placeholder="۰" value={amountStr} onChange={setAmountStr}
+            maxDigits={12}
+            className="w-full min-w-0 bg-transparent text-center text-3xl sm:text-4xl font-extrabold text-white tracking-tight rounded-xl focus-visible:outline focus-visible:outline-1 focus-visible:outline-lime"
+            wordsClassName="mt-1 px-4 text-center text-xs text-muted" />
         </div>
 
         {/* Account selection */}
@@ -163,41 +177,38 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[11px] text-muted block mb-1">از حساب</label>
-                <select
-                  value={selectedAccId || ''}
-                  onChange={(e) => setSelectedAccId(Number(e.target.value))}
-                  className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-                >
-                  {accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <Select
+                  value={selectedAccId || undefined}
+                  onChange={(val) => setSelectedAccId(Number(val))}
+                  options={accounts
+                    .filter((a): a is Account & { id: number } => a.id != null)
+                    .map(a => ({ value: a.id, label: a.name }))}
+                  placeholder="انتخاب حساب"
+                />
               </div>
               <div>
                 <label className="text-[11px] text-muted block mb-1">به حساب</label>
-                <select
-                  value={selectedToAccId || ''}
-                  onChange={(e) => setSelectedToAccId(Number(e.target.value))}
-                  className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-                >
-                  {accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <Select
+                  value={selectedToAccId || undefined}
+                  onChange={(val) => setSelectedToAccId(Number(val))}
+                  options={accounts
+                    .filter((a): a is Account & { id: number } => a.id != null)
+                    .map(a => ({ value: a.id, label: a.name }))}
+                  placeholder="انتخاب حساب"
+                />
               </div>
             </div>
           ) : (
             <div>
               <label className="text-[11px] text-muted block mb-1">حساب مبدا</label>
-              <select
-                value={selectedAccId || ''}
-                onChange={(e) => setSelectedAccId(Number(e.target.value))}
-                className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-              >
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
+              <Select
+                value={selectedAccId || undefined}
+                onChange={(val) => setSelectedAccId(Number(val))}
+                options={accounts
+                  .filter((a): a is Account & { id: number } => a.id != null)
+                  .map(a => ({ value: a.id, label: a.name }))}
+                placeholder="انتخاب حساب"
+              />
             </div>
           )}
 
@@ -211,13 +222,33 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
               className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky placeholder:text-muted"
             />
           </div>
+
+          {/* Savings Return Commitment Checkbox */}
+          {isWithdrawalFromSavings && (
+            <div
+              onClick={() => setReturnCommitment(prev => !prev)}
+              className="flex items-center gap-2.5 p-2.5 rounded-xl bg-lime/10 border border-lime/25 cursor-pointer text-xs select-none"
+            >
+              <input
+                type="checkbox"
+                checked={returnCommitment}
+                onChange={e => setReturnCommitment(e.target.checked)}
+                className="accent-lime w-4 h-4 rounded cursor-pointer"
+                onClick={e => e.stopPropagation()}
+              />
+              <div className="flex-1">
+                <span className="font-bold text-white">این مبلغ را به پس‌انداز برمی‌گردانم</span>
+                <span className="text-[10px] text-white/60 block mt-0.5">ثبت تعهد بازگشت (طلب از خود) جهت بازگرداندن در آینده</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Categories (for Expense/Income) */}
         {type !== 'TRANSFER' && (
           <div className="mb-3">
-            <span className="text-[11px] text-muted block mb-2">دسته‌بندی</span>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            <span className="text-[11px] text-muted block mb-1 px-0.5">دسته‌بندی</span>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar py-1.5 px-1 -mx-1">
               {categories.map(cat => {
                 const isSelected = selectedCatId === cat.id;
                 return (
@@ -225,12 +256,14 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
                     key={cat.id}
                     type="button"
                     onClick={() => setSelectedCatId(cat.id!)}
-                    className={`flex flex-col items-center gap-1 min-w-[58px] p-1.5 rounded-2xl transition-all ${
-                      isSelected ? 'bg-white/10 ring-2 ring-lime' : 'opacity-70 hover:opacity-100'
+                    className={`flex flex-col items-center gap-1 min-w-[58px] p-1.5 rounded-2xl border transition-all active:scale-95 ${
+                      isSelected
+                        ? 'bg-lime/15 border-lime shadow-[0_0_12px_rgba(232,252,180,0.15)] text-white'
+                        : 'border-transparent bg-transparent opacity-70 hover:opacity-100 hover:bg-white/5'
                     }`}
                   >
                     <CategoryIcon icon={cat.icon} colorIdx={cat.color} size={18} />
-                    <span className="text-[10px] text-white truncate max-w-[54px]">{cat.name}</span>
+                    <span className="text-[10px] text-white truncate max-w-[54px] font-medium">{cat.name}</span>
                   </button>
                 );
               })}

@@ -28,6 +28,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -40,12 +41,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ir.jibeman.MainActivity
 import ir.jibeman.app
 import ir.jibeman.authenticate
 import ir.jibeman.core.Backup
+import ir.jibeman.core.BackupCipher
 import ir.jibeman.core.Jalali
 import ir.jibeman.core.Money
 import ir.jibeman.core.db.Category
@@ -283,26 +288,49 @@ private fun CategoryDialog(c: Category, onDismiss: () -> Unit) {
 // ---------- backup ----------
 
 @Composable
-fun BackupScreen(back: () -> Unit) {
+fun BackupScreen(activity: MainActivity, back: () -> Unit) {
     val app = app()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pendingImport by remember { mutableStateOf<android.net.Uri?>(null) }
-    fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_LONG).show()
+    var pendingImport by remember { mutableStateOf<String?>(null) }
+    var encryptedImport by remember { mutableStateOf(false) }
+    var showExport by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    fun toast(text: String) = Toast.makeText(ctx, text, Toast.LENGTH_LONG).show()
 
-    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch {
+    val uri = activity.backupImport
+    LaunchedEffect(uri) {
+        if (uri != null) {
+            busy = true
             try {
-                val json = Backup.export(app.dao)
-                withContext(Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(json.toByteArray()) } }
-                app.prefs.lastBackupAt = System.currentTimeMillis()
-                toast("پشتیبان ذخیره شد")
-            } catch (e: Exception) {
-                toast("ذخیره نشد: ${e.message}")
+                val text = withContext(Dispatchers.IO) {
+                    checkNotNull(ctx.contentResolver.openInputStream(uri)).use { file ->
+                        val limit = 64 * 1024 * 1024
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        var size = 0
+                        while (true) {
+                            val read = file.read(buffer)
+                            if (read < 0) break
+                            size += read
+                            require(size <= limit)
+                            output.write(buffer, 0, read)
+                        }
+                        output.toString("UTF-8")
+                    }
+                }
+                encryptedImport = withContext(Dispatchers.Default) { Backup.isEncrypted(text) }
+                pendingImport = text
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                activity.dismissBackupImport()
+                toast("فایل پشتیبان قابل خواندن نیست.")
+            } finally {
+                busy = false
             }
         }
     }
-    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> pendingImport = uri }
 
     Column(Modifier.fillMaxSize().glowBg()) {
         TopBar("پشتیبان‌گیری و بازیابی", back)
@@ -311,49 +339,96 @@ fun BackupScreen(back: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     CatIcon(Ic.save, C.cat[0])
                     Column(Modifier.weight(1f)) {
-                        T("همه اطلاعات فقط روی همین گوشی است", 13.5f, 700)
+                        T("پشتیبان رمزنگاری‌شدهٔ اطلاعات گوشی", 13.5f, 700)
                         T(backupAge(app.prefs.lastBackupAt), 11.5f, color = C.muted)
                     }
                 }
-                T("اگر گوشی گم یا خراب شود، فقط فایل پشتیبان اطلاعاتت را برمی‌گرداند. هر چند روز یک بار پشتیبان بگیر و فایل را جای دیگری هم نگه دار.",
+                T("برای بازیابی به فایل و عبارت پشتیبان نیاز داری. عبارت را جدا از فایل نگه دار.",
                     12, color = C.t2, modifier = Modifier.padding(top = 10.dp))
             }
-            LimeButton("ذخیره فایل پشتیبان", Modifier.fillMaxWidth(), Ic.save) {
-                val j = Jalali.of(System.currentTimeMillis())
-                exporter.launch("jibeman-${j.y}-${"%02d".format(j.m)}-${"%02d".format(j.d)}.json")
-            }
-            GhostButton("بازیابی از فایل", Modifier.fillMaxWidth(), Ic.upload) { importer.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) }
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(C.warn.copy(alpha = 0.08f))
-                    .border(1.dp, C.warn.copy(alpha = 0.22f), RoundedCornerShape(16.dp)).padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Ico(Ic.alert, 18.dp, C.warn)
-                // shortcut: plain JSON; encrypted backup is planned for phase 5
-                T("فایل پشتیبان رمزگذاری نشده و موجودی و تراکنش‌هایت در آن خواناست. آن را جایی عمومی نفرست.", 12, color = C.t2)
+            LimeButton("ذخیره فایل پشتیبان", Modifier.fillMaxWidth(), Ic.save) { if (!busy) showExport = true }
+            GhostButton("بازیابی از فایل", Modifier.fillMaxWidth(), Ic.upload) {
+                if (!busy) activity.chooseBackupFile()
             }
         }
     }
 
-    pendingImport?.let { uri ->
-        Confirm(
-            "بازیابی پشتیبان", "همه اطلاعات فعلی برنامه پاک می‌شود و اطلاعات فایل جایگزین آن می‌شود.", "بازیابی", danger = true,
-            onOk = {
-                scope.launch {
-                    try {
-                        val text = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() } }
-                        val n = Backup.import(app.dao, text)
-                        toast("بازیابی شد: ${Money.fa(n.toString())} تراکنش")
-                    } catch (e: Backup.BadFile) {
-                        toast(e.message ?: "فایل معتبر نیست")
-                    } catch (e: Exception) {
-                        toast("خواندن فایل ممکن نشد")
+    if (showExport || pendingImport != null) {
+        BackupPasswordDialog(
+            exporting = showExport,
+            encrypted = encryptedImport,
+            busy = busy,
+            onDismiss = { showExport = false; pendingImport = null; activity.dismissBackupImport() },
+        ) { password ->
+            scope.launch {
+                busy = true
+                try {
+                    if (showExport) {
+                        val payload = Backup.export(app.dao, password)
+                        showExport = false
+                        val date = Jalali.of(System.currentTimeMillis())
+                        activity.saveBackupFile("jibeman-${date.y}-${"%02d".format(date.m)}-${"%02d".format(date.d)}.json", payload)
+                    } else {
+                        val source = checkNotNull(pendingImport)
+                        val count = Backup.import(app.dao, source, password)
+                        pendingImport = null
+                        activity.dismissBackupImport()
+                        toast("بازیابی شد: ${Money.fa(count.toString())} تراکنش")
                     }
-                }
-            },
-            onDismiss = { pendingImport = null },
-        )
+                    null
+                } catch (error: Backup.BadFile) {
+                    error.message ?: "فایل معتبر نیست."
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    "عملیات پشتیبان‌گیری انجام نشد."
+                } finally {
+                    busy = false
+                }?.let { toast(it) }
+            }
+        }
     }
+}
+
+@Composable
+private fun BackupPasswordDialog(
+    exporting: Boolean, encrypted: Boolean, busy: Boolean, onDismiss: () -> Unit, onConfirm: (String) -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    val canConfirm = when {
+        exporting -> password.codePointCount(0, password.length) >= BackupCipher.MIN_PASSWORD_LENGTH && password == confirmation
+        encrypted -> password.isNotEmpty()
+        else -> true
+    }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = C.sheet,
+        title = { T(if (exporting) "رمزنگاری فایل پشتیبان" else "بازیابی فایل پشتیبان", 16, 800) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                T(when {
+                    exporting -> "یک عبارت مستقل با حداقل ۱۲ کاراکتر انتخاب کن. بازیابی بدون این عبارت ممکن نیست."
+                    encrypted -> "اطلاعات فعلی با محتوای فایل جایگزین می‌شود."
+                    else -> "این فایل قدیمی خواناست. اطلاعات فعلی جایگزین می‌شود. بعد از بازیابی پشتیبان رمزنگاری‌شده بگیر."
+                }, 12, color = C.t2)
+                if (exporting || encrypted) {
+                    Field(password, { password = it }, "عبارت پشتیبان", keyboardType = KeyboardType.Password,
+                        visualTransformation = PasswordVisualTransformation())
+                }
+                if (exporting) {
+                    Field(confirmation, { confirmation = it }, "تکرار عبارت پشتیبان", keyboardType = KeyboardType.Password,
+                        visualTransformation = PasswordVisualTransformation())
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(password) }, enabled = canConfirm && !busy) {
+                T(if (exporting) "ذخیره" else "بازیابی", 14, 700, if (canConfirm && !busy) C.accent else C.muted)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { T("انصراف", 14, color = C.t2) } },
+    )
 }
 
 // ---------- security ----------

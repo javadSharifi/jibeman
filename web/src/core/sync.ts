@@ -1,5 +1,7 @@
 import { liveQuery } from 'dexie';
-import { db, SYNC_TABLES, type SyncTableName, setSyncingRemote } from './db';
+import { db, SYNC_TABLES, type SyncTableName, markSyncTransaction } from './db';
+import { cloudDataKey, forgetCloudKey, loadCloudKey, saveCloudKey, seal, unseal } from './crypto';
+import { protectRow, revealRow } from './db/protectedRows';
 
 export type SyncCfg = {
   url: string;
@@ -7,11 +9,14 @@ export type SyncCfg = {
   since: number;
   at: number;
   email: string;
+  version?: 2;
 };
 
 export const DEFAULT_SYNC_URL = 'https://jibeman-sync.mohammadjavadsharifi98.workers.dev';
 const LS_KEY = 'jibeman:sync';
-const BATCH_SIZE = 200;
+const BATCH_SIZE = 50;
+const encryptedPrefix = 'jms2.';
+const keyScope = (cfg: SyncCfg) => `${cfg.url}|${cfg.email}`;
 const STALE_MS = 5 * 60_000; // sync on resume if older than 5 min
 
 export const getCfg = (): SyncCfg | null => {
@@ -57,11 +62,7 @@ async function callApi<T>(cfg: SyncCfg, path: string, body: unknown): Promise<T>
   return res.json();
 }
 
-/**
- * PBKDF2 Zero-Knowledge key derivation:
- * Derives a 256-bit base64url key from Gmail + Password.
- * Neither password nor raw key ever leaves the phone unencrypted.
- */
+// Retain the legacy authentication credential so existing accounts can sign in.
 export async function deriveKey(email: string, pass: string): Promise<string> {
   const cleanEmail = email.trim().toLowerCase();
   const base = await crypto.subtle.importKey(
@@ -113,35 +114,38 @@ export async function connect(
   mode: 'register' | 'login',
   url: string = DEFAULT_SYNC_URL,
 ) {
-  const key = await deriveKey(email, pass);
+  if (runningPromise) await runningPromise.catch(() => {});
+  const endpoint = new URL(url);
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
+  if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && loopback)) {
+    throw new Error('Secure sync endpoint required');
+  }
+  const health = await fetch(url.replace(/\/$/, '') + '/health', { cache: 'no-store' });
+  if (!health.ok || (await health.json()).version !== 2) throw new SyncHttpError(426, 'Secure sync server required');
+  const [key, dataKey] = await Promise.all([deriveKey(email, pass), cloudDataKey(email, pass)]);
   const cfg: SyncCfg = {
     url,
     key,
     since: 0,
     at: 0,
     email: email.trim().toLowerCase(),
+    version: 2,
   };
 
-  await callApi(cfg, '/api/register', { mode });
+  const server = await callApi<{ version?: number }>(cfg, '/api/register', { mode, version: 2 });
+  if (server.version !== 2) throw new SyncHttpError(426, 'Secure sync server required');
+  await saveCloudKey(keyScope(cfg), dataKey);
   setCfg(cfg);
 
-  try {
-    if (mode === 'register') {
-      // In register mode, push all local rows
-      await enqueueAll();
-    }
-    await syncNow();
-  } catch (err) {
-    if (mode === 'register') {
-      setCfg(null);
-      await db.outbox.clear();
-    }
-    throw err;
-  }
+  if (mode === 'register') await enqueueAll();
+  await syncNow();
 }
 
 export async function disconnect() {
+  if (runningPromise) await runningPromise.catch(() => {});
+  const cfg = getCfg();
   setCfg(null);
+  if (cfg) await forgetCloudKey(keyScope(cfg));
   await db.outbox.clear();
 }
 
@@ -153,105 +157,128 @@ type RemoteRow = {
   deleted: 0 | 1;
 };
 
-async function applyRemote(changes: RemoteRow[]) {
-  if (!changes.length) return;
+type Change = {
+  t: string;
+  id: string;
+  updatedAt: number;
+  deleted?: 1;
+  legacy?: 1;
+  data?: string;
+};
 
-  setSyncingRemote(true);
-  try {
-    const tableObjects = SYNC_TABLES.map((t) => (db as any)[t]).filter(Boolean);
-    await db.transaction('rw', [...tableObjects, db.outbox], async () => {
-      for (const c of changes) {
-        if (!SYNC_TABLES.includes(c.tbl)) continue;
-        const targetTable = (db as any)[c.tbl];
-        if (!targetTable) continue;
+const rowContext = (table: string, id: string, updatedAt: number) =>
+  JSON.stringify(['jibeman', 'sync', 2, table, id, updatedAt]);
 
-        const numId = Number(c.id);
-        const recordId = Number.isNaN(numId) ? c.id : numId;
+const recordId = (id: string) => Number.isNaN(Number(id)) ? id : Number(id);
 
-        if (c.deleted) {
-          await targetTable.delete(recordId);
-          continue;
-        }
+async function encodeRemote(key: CryptoKey, table: string, id: string, at: number, row: object) {
+  return encryptedPrefix + await seal(key, JSON.stringify(row), rowContext(table, id, at));
+}
 
-        if (c.data) {
-          try {
-            const parsed = JSON.parse(c.data);
-            await targetTable.put(parsed);
-          } catch {}
-        }
+async function applyRemote(key: CryptoKey, changes: RemoteRow[]): Promise<Change[]> {
+  const upgrades: Change[] = [];
+  const incoming: { change: RemoteRow; row: object | null }[] = [];
+  for (const change of changes) {
+    if (!SYNC_TABLES.includes(change.tbl)) continue;
+    if (change.deleted) {
+      incoming.push({ change, row: null });
+      continue;
+    }
+    if (!change.data) throw new Error('Missing sync data');
+    const encrypted = change.data.startsWith(encryptedPrefix);
+    const plaintext = encrypted
+      ? await unseal(key, change.data.slice(encryptedPrefix.length), rowContext(change.tbl, change.id, change.updated_at))
+      : change.data;
+    const row = JSON.parse(plaintext);
+    if (!row || typeof row !== 'object' || String(row.id) !== change.id || Object.hasOwn(row, 'privateData')) {
+      throw new Error('Invalid sync data');
+    }
+    if (!encrypted) {
+      upgrades.push({
+        t: change.tbl, id: change.id, updatedAt: change.updated_at, legacy: 1,
+        data: await encodeRemote(key, change.tbl, change.id, change.updated_at, row),
+      });
+    }
+    incoming.push({ change, row: await protectRow(change.tbl, row) });
+  }
+
+  if (incoming.length) {
+    await db.transaction('rw', [...SYNC_TABLES.map(name => db.table(name)), db.outbox], async () => {
+      markSyncTransaction();
+      for (const { change, row } of incoming) {
+        const pending = await db.outbox.get(`${change.tbl}|${change.id}`);
+        if (pending && pending.updatedAt >= change.updated_at) continue;
+        const table = db.table(change.tbl);
+        if (row) await table.put(row);
+        else await table.delete(recordId(change.id));
       }
     });
-  } finally {
-    setSyncingRemote(false);
   }
+  return upgrades;
 }
 
 async function runSync() {
   const cfg = getCfg();
   if (!cfg) return;
+  if (cfg.version !== 2) throw new SyncHttpError(428, 'Sign in again for encrypted sync');
+  const key = await loadCloudKey(keyScope(cfg));
+  if (!key) throw new SyncHttpError(428, 'Sign in again for encrypted sync');
+
+  const exchange = async (since: number, changes: Change[]) => {
+    const result = await callApi<{ version?: number; changes: RemoteRow[]; clock: number; more?: boolean }>(
+      cfg, '/api/sync', { version: 2, since, changes },
+    );
+    if (result.version !== 2) throw new SyncHttpError(426, 'Secure sync server required');
+    if (!Number.isSafeInteger(result.clock) || result.clock < since || !Array.isArray(result.changes)) {
+      throw new Error('Invalid sync response');
+    }
+    return result;
+  };
 
   for (;;) {
     const pending = await db.outbox.limit(BATCH_SIZE).toArray();
-    const changes: Array<{
-      t: string;
-      id: string;
-      updatedAt: number;
-      deleted?: 0 | 1;
-      data?: string;
-    }> = [];
-
-    for (const o of pending) {
-      if (o.deleted) {
-        changes.push({ t: o.t, id: o.id, updatedAt: o.updatedAt, deleted: 1 });
+    const changes: Change[] = [];
+    for (const entry of pending) {
+      if (entry.deleted) {
+        changes.push({ t: entry.t, id: entry.id, updatedAt: entry.updatedAt, deleted: 1 });
       } else {
-        const table = (db as any)[o.t];
-        if (table) {
-          const numId = Number(o.id);
-          const row = await table.get(Number.isNaN(numId) ? o.id : numId);
-          if (row) {
-            changes.push({
-              t: o.t,
-              id: o.id,
-              updatedAt: o.updatedAt,
-              data: JSON.stringify(row),
-            });
-          }
+        const stored = await db.table(entry.t).get(recordId(entry.id));
+        if (stored) {
+          const row = await revealRow(entry.t, stored);
+          changes.push({
+            t: entry.t, id: entry.id, updatedAt: entry.updatedAt,
+            data: await encodeRemote(key, entry.t, entry.id, entry.updatedAt, row),
+          });
         }
       }
     }
 
-    const res = await callApi<{ changes: RemoteRow[]; clock: number }>(
-      cfg,
-      '/api/sync',
-      {
-        since: cfg.since,
-        changes,
-      },
-    );
-
-    await applyRemote(res.changes);
+    const response = await exchange(cfg.since, changes);
+    const upgrades = await applyRemote(key, response.changes);
+    for (let i = 0; i < upgrades.length; i += BATCH_SIZE) {
+      await exchange(response.clock, upgrades.slice(i, i + BATCH_SIZE));
+    }
 
     await db.transaction('rw', db.outbox, async () => {
-      for (const o of pending) {
-        const cur = await db.outbox.get(o.key);
-        if (cur && cur.updatedAt === o.updatedAt && cur.deleted === o.deleted) {
-          await db.outbox.delete(o.key);
+      for (const entry of pending) {
+        const current = await db.outbox.get(entry.key);
+        if (current && current.updatedAt === entry.updatedAt && current.deleted === entry.deleted) {
+          await db.outbox.delete(entry.key);
         }
       }
     });
 
-    cfg.since = res.clock;
+    cfg.since = response.clock;
     cfg.at = Date.now();
     setCfg(cfg);
-
-    if (pending.length < BATCH_SIZE) break;
+    if (!response.more && pending.length < BATCH_SIZE) break;
   }
 }
 
 let runningPromise: Promise<void> | null = null;
 export const syncNow = () => (runningPromise ??= runSync().finally(() => (runningPromise = null)));
 
-export const isConnected = () => !!getCfg();
+export const isConnected = () => getCfg()?.version === 2;
 
 /** Background periodic sync listener */
 export function startSync() {
@@ -263,19 +290,19 @@ export function startSync() {
 
   const resume = () => {
     const c = getCfg();
-    if (c && Date.now() - c.at > STALE_MS) {
+    if (c?.version === 2 && Date.now() - c.at > STALE_MS) {
       scheduleSoon(500);
     }
   };
 
   const sub = liveQuery(() => db.outbox.count()).subscribe({
     next: (n) => {
-      if (n && getCfg()) scheduleSoon(5_000);
+      if (n && isConnected()) scheduleSoon(5_000);
     },
   });
 
   const onOnline = () => {
-    if (getCfg()) scheduleSoon(1000);
+    if (isConnected()) scheduleSoon(1000);
   };
 
   document.addEventListener('visibilitychange', resume);

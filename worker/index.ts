@@ -20,12 +20,14 @@ const TABLES = new Set([
   'splitExpenses',
   'splitShares',
   'rules',
+  'savingsCommitments',
+  'savingsPayments',
 ]);
 
 const MAX_CHANGES = 200; // per request
-const MAX_ROW_BYTES = 20_000;
+const MAX_ROW_BYTES = 100_000; // allows AES-GCM/base64 overhead for previously accepted Unicode JSON
 const MAX_ROWS_PER_ACCOUNT = 50_000;
-const MAX_SYNC_REQUEST = 5_000_000;
+const MAX_SYNC_REQUEST = 6_000_000;
 const MAX_JSON_REQUEST = 8_000;
 
 const LIMITS = {
@@ -62,7 +64,7 @@ const CORS = {
   'access-control-allow-methods': 'GET, POST, OPTIONS',
 };
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
 async function readJson(req: Request, max: number): Promise<unknown | null> {
   const reader = req.body?.getReader();
@@ -99,7 +101,7 @@ async function accountHash(req: Request): Promise<string | null> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-type Change = { t: string; id: string; updatedAt: number; deleted?: 0 | 1; data?: string };
+type Change = { t: string; id: string; updatedAt: number; deleted?: 0 | 1; legacy?: 1; data?: string };
 
 const MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
 
@@ -112,7 +114,11 @@ function validChange(c: Change): boolean {
     Number.isSafeInteger(c.updatedAt) &&
     c.updatedAt > 0 &&
     c.updatedAt <= Date.now() + MAX_CLOCK_SKEW_MS &&
-    (c.deleted ? true : typeof c.data === 'string' && c.data.length <= MAX_ROW_BYTES)
+    (c.legacy === undefined || (c.legacy === 1 && !c.deleted)) &&
+    (c.deleted === 1
+      ? c.data === undefined
+      : (c.deleted === undefined || c.deleted === 0) && typeof c.data === 'string' &&
+        c.data.length <= MAX_ROW_BYTES && /^jms2\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$/.test(c.data))
   );
 }
 
@@ -124,10 +130,10 @@ async function register(req: Request, env: Env, hash: string, ip: string) {
   const limit = await allow(env, mode === 'login' ? 'login' : 'register', ip);
   if (!limit.ok) return json({ error: 'rate limited', retryAfter: limit.retryAfter }, 429);
   const exists = !!(await env.DB.prepare('SELECT 1 FROM accounts WHERE hash = ?').bind(hash).first());
-  if (mode === 'login') return exists ? json({ ok: true }) : json({ error: 'unknown account' }, 401);
+  if (mode === 'login') return exists ? json({ ok: true, version: 2 }) : json({ error: 'unknown account' }, 401);
   if (exists) return json({ error: 'exists' }, 409);
   await env.DB.prepare('INSERT INTO accounts (hash, created_at) VALUES (?, ?)').bind(hash, Date.now()).run();
-  return json({ ok: true });
+  return json({ ok: true, version: 2 });
 }
 
 // Sync changes push & pull
@@ -137,7 +143,9 @@ async function sync(req: Request, env: Env, hash: string, ip: string) {
   }
   const limit = await allow(env, 'sync', `${ip}|${hash.slice(0, 16)}`);
   if (!limit.ok) return json({ error: 'rate limited', retryAfter: limit.retryAfter }, 429);
-  const body = (await readJson(req, MAX_SYNC_REQUEST)) as { since?: number; changes?: Change[] } | null;
+  const body = (await readJson(req, MAX_SYNC_REQUEST)) as { version?: number; since?: number; changes?: Change[] } | null;
+  if (!body) return json({ error: 'bad request' }, 400);
+  if (body.version !== 2) return json({ error: 'encrypted sync required', version: 2 }, 426);
   const since = body?.since;
   const changes = body?.changes ?? [];
   if (!body || !Number.isSafeInteger(since) || !Array.isArray(changes) || changes.length > MAX_CHANGES || !changes.every(validChange)) {
@@ -146,8 +154,11 @@ async function sync(req: Request, env: Env, hash: string, ip: string) {
 
   const stmts: D1PreparedStatement[] = [];
   if (changes.length) {
-    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM rows WHERE account = ?').bind(hash).first<{ n: number }>();
-    if ((n?.n ?? 0) + changes.length > MAX_ROWS_PER_ACCOUNT) return json({ error: 'full' }, 413);
+    const ordinaryCount = changes.filter(c => !c.legacy).length;
+    if (ordinaryCount) {
+      const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM rows WHERE account = ?').bind(hash).first<{ n: number }>();
+      if ((n?.n ?? 0) + ordinaryCount > MAX_ROWS_PER_ACCOUNT) return json({ error: 'full' }, 413);
+    }
     stmts.push(env.DB.prepare('UPDATE accounts SET clock = clock + 1 WHERE hash = ?').bind(hash));
     const upsert = env.DB.prepare(
       `INSERT INTO rows (account, tbl, id, data, updated_at, deleted, server_at)
@@ -156,19 +167,34 @@ async function sync(req: Request, env: Env, hash: string, ip: string) {
          data = excluded.data, updated_at = excluded.updated_at, deleted = excluded.deleted, server_at = excluded.server_at
        WHERE excluded.updated_at > rows.updated_at`,
     );
+    const upgrade = env.DB.prepare(
+      `UPDATE rows SET data = ?, server_at = (SELECT clock FROM accounts WHERE hash = ?)
+       WHERE account = ? AND tbl = ? AND id = ? AND updated_at = ? AND deleted = 0
+         AND data NOT LIKE 'jms2.%'`,
+    );
     for (const c of changes) {
-      stmts.push(upsert.bind(hash, c.t, c.id, c.deleted ? null : c.data, c.updatedAt, c.deleted ? 1 : 0, hash));
+      stmts.push(c.legacy
+        ? upgrade.bind(c.data, hash, hash, c.t, c.id, c.updatedAt)
+        : upsert.bind(hash, c.t, c.id, c.deleted ? null : c.data, c.updatedAt, c.deleted ? 1 : 0, hash));
     }
   }
 
+  // End each page on a whole server clock so no rows from one push are skipped.
+  const pageClock = `SELECT COALESCE(
+    (SELECT server_at FROM rows WHERE account = ? AND server_at > ? ORDER BY server_at LIMIT 1 OFFSET 199),
+    (SELECT clock FROM accounts WHERE hash = ?)
+  )`;
   stmts.push(
-    env.DB.prepare('SELECT tbl, id, data, updated_at, deleted FROM rows WHERE account = ? AND server_at > ?').bind(hash, since),
-    env.DB.prepare('SELECT clock FROM accounts WHERE hash = ?').bind(hash),
+    env.DB.prepare(`SELECT tbl, id, data, updated_at, deleted FROM rows
+      WHERE account = ? AND server_at > ? AND server_at <= (${pageClock}) ORDER BY server_at`)
+      .bind(hash, since, hash, since, hash),
+    env.DB.prepare(`SELECT (${pageClock}) AS page_clock, clock FROM accounts WHERE hash = ?`)
+      .bind(hash, since, hash, hash),
   );
   const res = await env.DB.batch(stmts);
   const pulled = res[res.length - 2].results;
-  const clock = (res[res.length - 1].results[0] as { clock: number }).clock;
-  return json({ changes: pulled, clock });
+  const position = res[res.length - 1].results[0] as { page_clock: number; clock: number };
+  return json({ version: 2, changes: pulled, clock: position.page_clock, more: position.page_clock < position.clock });
 }
 
 export default {
@@ -176,7 +202,7 @@ export default {
     const { pathname } = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (pathname === '/health' || pathname === '/') {
-      return json({ ok: true, service: 'jibeman-sync' });
+      return json({ ok: true, service: 'jibeman-sync', version: 2 });
     }
 
     const cap = pathname === '/api/sync' ? MAX_SYNC_REQUEST : MAX_JSON_REQUEST;

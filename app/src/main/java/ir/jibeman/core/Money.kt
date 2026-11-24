@@ -25,8 +25,46 @@ object Money {
         }
     }
 
-    /** Parses user-typed toman ("۱۲٬۵۰۰" / "12500") to rial, or null. */
-    fun parseToman(s: String): Long? = ascii(s).trim().takeIf { it.isNotEmpty() && it.all(Char::isDigit) && it.length <= 13 }?.toLong()?.times(10)
+    fun normalizeAmountInput(s: String, maxDigits: Int = 13, allowNegative: Boolean = false): String? {
+        val raw = ascii(s).filterNot(Char::isWhitespace).replace('٫', '.').replace('−', '-')
+        val unsigned = if (allowNegative) raw.removePrefix("-") else raw
+        return raw.takeIf { AMOUNT_EDIT.matches(unsigned) && unsigned.substringBefore('.').length <= maxDigits }
+    }
+
+    fun formatAmountInput(raw: String): String {
+        val whole = raw.substringBefore('.')
+        val digits = whole.removePrefix("-")
+        val grouped = digits.reversed().chunked(3).joinToString(",").reversed()
+        return (if (whole.startsWith('-')) "-" else "") + grouped + raw.drop(whole.length)
+    }
+
+    /** Converts toman to integer rial, including one optional fractional digit. */
+    fun parseToman(s: String, allowNegative: Boolean = false): Long? {
+        val raw = normalizeAmountInput(s, allowNegative = allowNegative) ?: return null
+        if (!COMPLETE_AMOUNT.matches(raw)) return null
+        val magnitude = raw.removePrefix("-")
+        val whole = magnitude.substringBefore('.').toLongOrNull() ?: 0
+        val remainder = magnitude.substringAfter('.', "0").toLong()
+        val rial = whole * 10 + remainder
+        return if (raw.startsWith('-')) -rial else rial
+    }
+
+    /** Format stored integer rial as an editable amount in toman without rounding. */
+    fun tomanInput(rial: Long): String {
+        val whole = abs(rial / 10)
+        val remainder = abs(rial % 10)
+        return (if (rial < 0) "-" else "") + whole + (if (remainder == 0L) "" else ".$remainder")
+    }
+
+    fun amountWords(rial: Long): String {
+        val whole = words(abs(rial / 10))
+        val remainder = abs(rial % 10)
+        return (if (rial < 0) "منفی " else "") + "$whole تومان" +
+            (if (remainder == 0L) "" else " و ${words(remainder)} ریال")
+    }
+
+    private val AMOUNT_EDIT = Regex("""[0-9]*(?:\.[0-9]?)?""")
+    private val COMPLETE_AMOUNT = Regex("""-?(?:[0-9]+|[0-9]*\.[0-9])""")
 
     fun group(n: Long): String {
         val s = abs(n).toString()
@@ -40,13 +78,15 @@ object Money {
 
     /** rial -> "۱۸۵٬۰۰۰" toman, isolated LTR so the sign stays on the left inside RTL text. */
     fun toman(rial: Long, plus: Boolean = false): String {
-        val t = rial / 10
         val sign = when {
-            t < 0 -> "−"
-            plus && t > 0 -> "+"
+            rial < 0 -> "−"
+            plus && rial > 0 -> "+"
             else -> ""
         }
-        return "$LRI$sign${group(t)}$PDI"
+        val whole = group(rial / 10)
+        val remainder = abs(rial % 10)
+        val fraction = if (remainder == 0L) "" else "٫${fa(remainder.toString())}"
+        return "$LRI$sign$whole$fraction$PDI"
     }
 
     /** rial -> "۳۲٫۵ میلیون" / "۸۵۰ هزار" (toman, rounded to one decimal). */

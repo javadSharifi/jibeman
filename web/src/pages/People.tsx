@@ -4,6 +4,8 @@ import { db, type Person } from '../core/db';
 import { HeaderBar } from '../components/UI';
 import { Money } from '../core/money';
 import { BankKit } from '../core/bankKit';
+import { protectRow, revealRows } from '../core/db/protectedRows';
+import { isLockEnabled } from '../core/security';
 
 interface PersonWithBalance extends Person {
   owedToMe: number;
@@ -27,7 +29,7 @@ export function People({ onBack, hidden }: { onBack: () => void; hidden: boolean
       db.debtPayments.toArray(),
     ]);
 
-    const withBalances: PersonWithBalance[] = allPersons.map(p => {
+    const withBalances: PersonWithBalance[] = (await revealRows('persons', allPersons)).map(p => {
       let owedToMe = 0;
       let iOwe = 0;
       const pDebts = allDebts.filter(d => d.personId === p.id || d.person.trim() === p.name.trim());
@@ -54,13 +56,13 @@ export function People({ onBack, hidden }: { onBack: () => void; hidden: boolean
   const handleSave = async () => {
     if (!name.trim()) return;
 
-    await db.persons.add({
+    await db.persons.add(await protectRow('persons', {
       name: name.trim(),
       phone: phone.trim() || undefined,
       cardNo: cardNo ? BankKit.cleanDigits(cardNo) : undefined,
       note: note.trim() || undefined,
       createdAt: Date.now(),
-    });
+    }));
 
     setIsAddOpen(false);
     setName('');
@@ -117,12 +119,12 @@ export function People({ onBack, hidden }: { onBack: () => void; hidden: boolean
                   <div className="text-right">
                     {net > 0 && (
                       <span className="text-xs font-bold text-ok block dir-ltr">
-                        {hidden ? '•••' : `+${Money.group(Math.floor(net / 10))}`} تومان طلبکارید
+                        {hidden ? '•••' : Money.toman(net, true)} تومان طلبکارید
                       </span>
                     )}
                     {net < 0 && (
                       <span className="text-xs font-bold text-warn block dir-ltr">
-                        {hidden ? '•••' : `${Money.group(Math.floor(Math.abs(net) / 10))}`} تومان بدهکارید
+                        {hidden ? '•••' : Money.toman(Math.abs(net))} تومان بدهکارید
                       </span>
                     )}
                     {net === 0 && (
@@ -142,10 +144,16 @@ export function People({ onBack, hidden }: { onBack: () => void; hidden: boolean
                 <div className="pt-2 border-t border-line flex items-center justify-between text-xs text-muted">
                   <div className="flex items-center gap-1.5 font-mono dir-ltr">
                     <CreditCard size={13} />
-                    <span>{BankKit.formatCardNumber(p.cardNo)}</span>
+                    <span>•••• •••• •••• {p.cardNo.slice(-4)}</span>
                   </div>
                   <button
-                    onClick={() => navigator.clipboard.writeText(p.cardNo!)}
+                    onClick={() => {
+                      if (!isLockEnabled()) {
+                        alert('برای دسترسی به شماره کارت، ابتدا رمز برنامه را در تنظیمات امنیت فعال کنید.');
+                        return;
+                      }
+                      navigator.clipboard.writeText(p.cardNo!).catch(() => {});
+                    }}
                     className="text-[10px] text-sky font-bold hover:underline"
                   >
                     کپی کارت
@@ -165,7 +173,7 @@ export function People({ onBack, hidden }: { onBack: () => void; hidden: boolean
 
       {/* Add Person Modal */}
       {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">افزودن شخص جدید</h2>
@@ -192,7 +200,7 @@ export function People({ onBack, hidden }: { onBack: () => void; hidden: boolean
                 placeholder="0912..."
                 dir="ltr"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => setPhone(Money.ascii(e.target.value))}
                 className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky font-mono"
               />
             </div>

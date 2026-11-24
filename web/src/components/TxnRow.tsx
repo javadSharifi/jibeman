@@ -24,7 +24,6 @@ export function TxnRow({ txn, hidden = false, onClick }: TxnRowProps) {
     : 'text-white';
 
   const sign = isIncome || (isDebt && txn.amount > 0) ? '+' : isTransfer ? '' : '−';
-  const tomanAmt = Math.abs(Math.floor(txn.amount / 10));
 
   return (
     <div
@@ -60,7 +59,7 @@ export function TxnRow({ txn, hidden = false, onClick }: TxnRowProps) {
           ) : (
             <>
               {sign}
-              {Money.group(tomanAmt)}
+              {Money.toman(Math.abs(txn.amount))}
               <span className="text-[10px] text-muted font-normal mr-1">تومان</span>
             </>
           )}

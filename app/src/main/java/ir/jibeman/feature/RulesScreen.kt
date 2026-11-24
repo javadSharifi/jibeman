@@ -46,6 +46,7 @@ import ir.jibeman.ui.CatIcon
 import ir.jibeman.ui.Chip
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.Ic
@@ -119,8 +120,8 @@ private fun RuleDialog(r: Rule, exp: List<Category>, inc: List<Category>, onDism
     var contains by remember { mutableStateOf(r.contains) }
     var bank by remember { mutableStateOf(r.bank) }
     var type by remember { mutableStateOf(r.type) }
-    var min by remember { mutableStateOf(r.minAmount?.let { (it / 10).toString() }.orEmpty()) }
-    var max by remember { mutableStateOf(r.maxAmount?.let { (it / 10).toString() }.orEmpty()) }
+    var min by remember { mutableStateOf(r.minAmount?.let(Money::tomanInput).orEmpty()) }
+    var max by remember { mutableStateOf(r.maxAmount?.let(Money::tomanInput).orEmpty()) }
     var ignore by remember { mutableStateOf(r.ignore) }
     var cat by remember { mutableStateOf(r.categoryId) }
     var confirm by remember { mutableStateOf(false) }
@@ -141,8 +142,8 @@ private fun RuleDialog(r: Rule, exp: List<Category>, inc: List<Category>, onDism
                 }
                 Label("مبلغ (تومان)")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Field(min, { min = it }, "حداقل", Modifier.weight(1f), number = true)
-                    Field(max, { max = it }, "حداکثر", Modifier.weight(1f), number = true)
+                    AmountField(min, { min = it }, "حداقل", Modifier.weight(1f))
+                    AmountField(max, { max = it }, "حداکثر", Modifier.weight(1f))
                 }
                 T("آن‌گاه…", 13, 700, C.accent, Modifier.padding(top = 16.dp))
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

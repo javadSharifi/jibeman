@@ -4,6 +4,9 @@ import { parseBankSms, type ParsedSms } from '../core/parser';
 import { getBankByCode } from '../core/banks';
 import { Money } from '../core/money';
 import { db, type Account, type Category } from '../core/db';
+import { Select } from './Select';
+
+import { revealRows } from '../core/db/protectedRows';
 
 interface SmartPasteProps {
   isOpen: boolean;
@@ -48,9 +51,10 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
     if (res) {
       // Auto-match account by bank or last4
       if (res.card4) {
-        db.cards.where('last4').equals(res.card4).first().then(card => {
+        db.cards.toArray().then(cards => revealRows('cards', cards)).then(cards => {
+          const card = cards.find(item => item.last4 === res.card4);
           if (card) setSelectedAccId(card.accountId);
-        });
+        }).catch(() => {});
       } else if (res.bank && res.bank !== 'other') {
         const matchingAcc = accounts.find(a => a.bankCode === res.bank);
         if (matchingAcc) setSelectedAccId(matchingAcc.id!);
@@ -105,11 +109,10 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
   };
 
   const bank = parsed ? getBankByCode(parsed.bank) : null;
-  const tomanAmt = parsed ? Math.floor(parsed.amount / 10) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md bg-sheet rounded-[28px] border border-white/10 p-5 flex flex-col shadow-2xl max-h-[90vh] overflow-y-auto no-scrollbar">
+    <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
+      <div className="w-full max-w-md bg-sheet rounded-[28px] border border-white/10 p-5 flex flex-col shadow-2xl max-h-[min(90vh,100%)] no-scrollbar">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-line">
           <div className="flex items-center gap-2">
@@ -176,40 +179,40 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
             <div className="pt-2 border-t border-line flex items-baseline justify-between">
               <span className="text-xs text-muted">مبلغ استخراج‌شده:</span>
               <div className="text-lg font-black text-white dir-ltr">
-                {Money.group(tomanAmt)}
+                {Money.toman(parsed.amount)}
                 <span className="text-[10px] text-muted font-normal mr-1">تومان</span>
               </div>
             </div>
             <div className="text-[11px] text-muted text-left dir-rtl">
-              {Money.words(tomanAmt)} تومان
+              {Money.amountWords(parsed.amount)}
             </div>
 
             {/* Account Selector */}
             <div className="grid grid-cols-2 gap-2 pt-2">
               <div>
                 <label className="text-[10px] text-muted block mb-1">اتصال به حساب</label>
-                <select
-                  value={selectedAccId || ''}
-                  onChange={(e) => setSelectedAccId(Number(e.target.value))}
-                  className="w-full h-9 rounded-xl bg-surface2 border border-line text-white text-xs px-2 focus:outline-none"
-                >
-                  {accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <Select
+                  size="sm"
+                  value={selectedAccId || undefined}
+                  onChange={(val) => setSelectedAccId(Number(val))}
+                  options={accounts
+                    .filter((a): a is Account & { id: number } => a.id != null)
+                    .map(a => ({ value: a.id, label: a.name }))}
+                  placeholder="انتخاب حساب"
+                />
               </div>
 
               <div>
                 <label className="text-[10px] text-muted block mb-1">دسته‌بندی</label>
-                <select
-                  value={selectedCatId || ''}
-                  onChange={(e) => setSelectedCatId(Number(e.target.value))}
-                  className="w-full h-9 rounded-xl bg-surface2 border border-line text-white text-xs px-2 focus:outline-none"
-                >
-                  {categories.filter(c => c.kind === parsed.type).map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                <Select
+                  size="sm"
+                  value={selectedCatId || undefined}
+                  onChange={(val) => setSelectedCatId(Number(val))}
+                  options={categories
+                    .filter((c): c is Category & { id: number } => c.id != null && c.kind === parsed.type)
+                    .map(c => ({ value: c.id, label: c.name }))}
+                  placeholder="انتخاب دسته‌بندی"
+                />
               </div>
             </div>
 

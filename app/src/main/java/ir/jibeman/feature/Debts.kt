@@ -46,6 +46,7 @@ import ir.jibeman.ui.CatIcon
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Divider
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.Group
@@ -138,8 +139,7 @@ fun NewDebtDialog(initialDir: String, initialPerson: String = "", onDismiss: () 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Segmented(listOf(DebtDir.OWED_TO_ME to "طلب دارم", DebtDir.I_OWE to "بدهکارم"), dir) { dir = it }
                 Field(person, { person = it }, "اسم شخص", leading = Ic.user)
-                Field(amountText, { amountText = it }, "مبلغ (تومان)", number = true)
-                Money.parseToman(amountText)?.takeIf { it > 0 }?.let { T(Money.words(it / 10) + " تومان", 11, color = C.muted) }
+                AmountField(amountText, { amountText = it }, "مبلغ (تومان)")
                 PickField(due?.let { "سررسید: ${Jalali.longDate(it)}" } ?: "سررسید (اختیاری)", Ic.cal, muted = due == null) { pick = true }
                 Field(note, { note = it }, "توضیح (اختیاری)", leading = Ic.pen)
                 Row(Modifier.clickable { moved = !moved }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -234,7 +234,7 @@ fun DebtDetailScreen(id: Long, back: () -> Unit) {
 private fun PartialPayDialog(incoming: Boolean, remaining: Long, onDismiss: () -> Unit, onOk: (Long, Long?) -> Unit) {
     val dao = app().dao
     val accounts by remember { dao.balances() }.collectAsStateWithLifecycle(emptyList())
-    var text by remember { mutableStateOf((remaining / 10).toString()) }
+    var text by remember { mutableStateOf(Money.tomanInput(remaining)) }
     var acc by remember { mutableLongStateOf(0) }
     if (acc == 0L && accounts.isNotEmpty()) acc = accounts.first().account.id
     var noAccount by remember { mutableStateOf(false) }
@@ -244,8 +244,8 @@ private fun PartialPayDialog(incoming: Boolean, remaining: Long, onDismiss: () -
         title = { T(if (incoming) "دریافت طلب" else "پرداخت بدهی", 17, 800) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Field(text, { text = it }, "مبلغ (تومان)", number = true)
-                T(if (a == null) "حداکثر ${Money.toman(remaining)} تومان" else Money.words(a / 10) + " تومان", 11, color = if (a == null) C.warn else C.muted)
+                AmountField(text, { text = it }, "مبلغ (تومان)")
+                if (a == null) T("حداکثر ${Money.toman(remaining)} تومان", 11, color = C.warn)
                 if (!noAccount) AccountPicker(accounts, acc, if (incoming) "به" else "از", Modifier.fillMaxWidth()) { acc = it }
                 GhostButton(if (noAccount) "ثبت روی حساب" else "بدون حساب (نقدی بیرون از برنامه)", Modifier.fillMaxWidth()) { noAccount = !noAccount }
             }

@@ -141,12 +141,79 @@ class BankKitTest {
     }
 
     @Test
-    fun formatExpiry_formatsMonthYear() {
-        assertEquals("05 / 08", BankKit.formatExpiry("0508"))
-        assertEquals("05", BankKit.formatExpiry("05"))
+    fun formatExpiry_formatsMonthYearStandard() {
+        // Standard Persian format YYYY/MM (e.g. 1406/07)
+        assertEquals("1406/07", BankKit.formatExpiry("1406/07"))
+        assertEquals("1406/07", BankKit.formatExpiry("1406/7"))
+        assertEquals("1406/07", BankKit.formatExpiry("140607"))
+        assertEquals("۱۴۰۶/۰۷", Money.fa(BankKit.formatExpiry("1406/07")))
+
+        // Legacy format migration (MM/YY or MMYY -> YYYY/MM)
+        assertEquals("1408/05", BankKit.formatExpiry("0508"))
+        assertEquals("1408/05", BankKit.formatExpiry("05 / 08"))
+        assertEquals("1406/12", BankKit.formatExpiry("1206"))
+    }
+
+    @Test
+    fun expiry_monthAndYearValidation() {
+        // Month validation: 1..12
+        assertTrue(BankKit.isMonthValid("1"))
+        assertTrue(BankKit.isMonthValid("7"))
+        assertTrue(BankKit.isMonthValid("07"))
+        assertTrue(BankKit.isMonthValid("12"))
+        assertTrue(BankKit.isMonthValid(""))
+        assertFalse(BankKit.isMonthValid("0"))
+        assertFalse(BankKit.isMonthValid("00"))
+        assertFalse(BankKit.isMonthValid("13"))
+        assertFalse(BankKit.isMonthValid("99"))
+
+        // Year validation: 2 or 4 digits
+        assertTrue(BankKit.isYearValid("06"))
+        assertTrue(BankKit.isYearValid("1406"))
+        assertTrue(BankKit.isYearValid("99"))
+        assertTrue(BankKit.isYearValid("1399"))
+        assertTrue(BankKit.isYearValid(""))
+        assertFalse(BankKit.isYearValid("1"))
+        assertFalse(BankKit.isYearValid("140"))
+
+        // Expiry string validation
+        assertTrue(BankKit.isExpiryValid("1406/07"))
+        assertTrue(BankKit.isExpiryValid("1406/7"))
         assertTrue(BankKit.isExpiryValid("05 / 08"))
         assertTrue(BankKit.isExpiryValid("12 / 08"))
         assertFalse(BankKit.isExpiryValid("13 / 08"))
         assertFalse(BankKit.isExpiryValid("00 / 08"))
+        assertFalse(BankKit.isExpiryValid("1406/13"))
+        assertFalse(BankKit.isExpiryValid("1406/00"))
+    }
+
+    @Test
+    fun expiry_buildAndParse() {
+        // Build expiry
+        assertEquals("1406/07", BankKit.buildExpiry("7", "06"))
+        assertEquals("1406/07", BankKit.buildExpiry("07", "1406"))
+        assertEquals("1399/11", BankKit.buildExpiry("11", "99"))
+        assertEquals("", BankKit.buildExpiry("", ""))
+
+        // Parse expiry
+        val p1 = BankKit.parseExpiry("1406/07")
+        assertEquals("07", p1.first)
+        assertEquals("1406", p1.second)
+
+        val p2 = BankKit.parseExpiry("05 / 08")
+        assertEquals("05", p2.first)
+        assertEquals("1408", p2.second)
+
+        val p3 = BankKit.parseExpiry("۱۴۰۶/۰۷")
+        assertEquals("07", p3.first)
+        assertEquals("1406", p3.second)
+    }
+
+    @Test
+    fun cvv2_preservesLeadingZeros() {
+        assertEquals("023", BankKit.cleanDigits("023"))
+        assertEquals("023", BankKit.cleanDigits("۰۲۳"))
+        assertEquals("007", BankKit.cleanDigits("007"))
+        assertEquals("0123", BankKit.cleanDigits("0123"))
     }
 }

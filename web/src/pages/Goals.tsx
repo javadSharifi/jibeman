@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AmountInput } from '../components/AmountInput';
 import { Plus, X, Target, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { db, type Goal, type GoalEntry } from '../core/db';
 import { Money } from '../core/money';
@@ -43,15 +44,15 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
   }, []);
 
   const handleSaveGoal = async () => {
-    const tT = parseInt(targetToman, 10);
-    if (!title.trim() || !tT) {
+    const target = Money.parseToman(targetToman);
+    if (!title.trim() || !target) {
       alert('لطفاً عنوان و مبلغ هدف را وارد کنید');
       return;
     }
 
     await db.goals.add({
       title: title.trim(),
-      target: tT * 10,
+      target,
       icon: 'Target',
       color: 4,
       closed: false,
@@ -66,10 +67,8 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
   const handleAddEntry = async () => {
     if (!entryTargetGoal) return;
-    const aT = parseInt(entryAmountToman, 10);
-    if (!aT) return;
-
-    const rial = aT * 10;
+    const rial = Money.parseToman(entryAmountToman);
+    if (!rial) return;
     await db.goalEntries.add({
       goalId: entryTargetGoal.id!,
       amount: isDeposit ? rial : -rial,
@@ -99,8 +98,6 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
       <div className="space-y-4 mt-4">
         {goals.map(g => {
           const pct = Math.min(100, Math.round((g.saved / g.target) * 100));
-          const savedToman = Math.floor(g.saved / 10);
-          const targetTomanVal = Math.floor(g.target / 10);
 
           return (
             <div key={g.id} className="p-4 rounded-[24px] bg-surface border border-line space-y-3">
@@ -112,7 +109,7 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                   <div>
                     <h3 className="text-sm font-bold text-white">{g.title}</h3>
                     <div className="text-[11px] text-muted">
-                      هدف: {hidden ? '•••' : `${Money.group(targetTomanVal)} تومان`}
+                      هدف: {hidden ? '•••' : `${Money.toman(g.target)} تومان`}
                     </div>
                   </div>
                 </div>
@@ -134,7 +131,7 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                 <div>
                   <span className="text-muted block text-[10px]">موجودی پس‌انداز شده:</span>
                   <span className="font-extrabold text-white">
-                    {hidden ? '•••' : `${Money.group(savedToman)} تومان`}
+                    {hidden ? '•••' : `${Money.toman(g.saved)} تومان`}
                   </span>
                 </div>
 
@@ -161,7 +158,7 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
       {/* Add Goal Modal */}
       {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">هدف پس‌انداز جدید</h2>
@@ -182,13 +179,12 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
             </div>
 
             <div>
-              <label className="text-[11px] text-muted block mb-1">مبلغ هدف (تومان)</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <label htmlFor="goal-target" className="text-[11px] text-muted block mb-1">مبلغ هدف (تومان)</label>
+              <AmountInput
+                id="goal-target"
                 placeholder="۰"
                 value={targetToman}
-                onChange={(e) => setTargetToman(e.target.value.replace(/\D/g, ''))}
+                onChange={setTargetToman}
                 className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
               />
             </div>
@@ -205,7 +201,7 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
 
       {/* Deposit / Withdraw Modal */}
       {entryTargetGoal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">تغییر موجودی {entryTargetGoal.title}</h2>
@@ -238,12 +234,11 @@ export function Goals({ onBack, hidden }: { onBack: () => void; hidden: boolean 
             </div>
 
             <div>
-              <label className="text-[11px] text-muted block mb-1">مبلغ (تومان)</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <label htmlFor="goal-entry-amount" className="text-[11px] text-muted block mb-1">مبلغ (تومان)</label>
+              <AmountInput
+                id="goal-entry-amount"
                 value={entryAmountToman}
-                onChange={(e) => setEntryAmountToman(e.target.value.replace(/\D/g, ''))}
+                onChange={setEntryAmountToman}
                 className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
               />
             </div>

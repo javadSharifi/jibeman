@@ -40,10 +40,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.jibeman.R
@@ -129,6 +131,7 @@ fun RealisticBankCard(
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
     onEdit: (() -> Unit)? = null,
+    revealDetails: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val bank = Banks.of(account.bankCode) ?: account.cardNumber?.let { BankKit.detectByCard(it) }
@@ -137,16 +140,21 @@ fun RealisticBankCard(
     val cardColorLong = account.cardColor ?: bank?.color ?: 0xFF1E2B4FL
     val cardColor = Color(cardColorLong)
 
-    var showCvv by remember { mutableStateOf(!interactive) }
+    var showCvv by remember(revealDetails) { mutableStateOf(false) }
 
     fun copyToClipboard(label: String, text: String, toastMsg: String) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText(label, text))
+        val clip = ClipData.newPlainText(label, text)
+        clip.description.extras = android.os.PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
+        }
+        cm.setPrimaryClip(clip)
         Toast.makeText(ctx, toastMsg, Toast.LENGTH_SHORT).show()
     }
 
     val panDigits = BankKit.cleanDigits(account.cardNumber)
     val displayPan = when {
+        !revealDetails -> "•••• •••• •••• " + if (panDigits.length >= 4) panDigits.takeLast(4) else "••••"
         panDigits.length == 16 -> BankKit.formatCardNumber(panDigits)
         panDigits.isNotEmpty() -> panDigits.chunked(4).joinToString(" ")
         !account.accountNo.isNullOrBlank() -> "شماره حساب: ${account.accountNo}"
@@ -175,13 +183,18 @@ fun RealisticBankCard(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     BankLogoBadge(bank, size = 38.dp)
                     Column {
-                        T(
-                            text = bank?.let { "بانک ${it.name}" } ?: account.name.ifBlank { "کارت بانکی" },
-                            size = 14.5f,
-                            weight = 800,
-                            color = Color.White,
-                            maxLines = 1,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            T(
+                                text = bank?.let { "بانک ${it.name}" } ?: account.name.ifBlank { "کارت بانکی" },
+                                size = 14.5f,
+                                weight = 800,
+                                color = Color.White,
+                                maxLines = 1,
+                            )
+                            if (account.isSavings) {
+                                T("پس‌انداز", 9.5f, 800, C.onLime, modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(C.lime).padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        }
                         if (bank != null && account.name.isNotBlank() && account.name != bank.name) {
                             T(account.name, 11, weight = 500, color = Color.White.copy(alpha = 0.82f), maxLines = 1)
                         }
@@ -233,8 +246,8 @@ fun RealisticBankCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .then(if (interactive && panDigits.length >= 16) Modifier.clickable {
-                        copyToClipboard("Card Number", panDigits, "شماره کارت کپی شد: $displayPan")
+                    .then(if (interactive && revealDetails && panDigits.length >= 16) Modifier.clickable {
+                        copyToClipboard("Card Number", panDigits, "شماره کارت کپی شد")
                     } else Modifier)
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -247,7 +260,7 @@ fun RealisticBankCard(
                     color = Color.White,
                     modifier = Modifier.weight(1f),
                 )
-                if (interactive && panDigits.length >= 16) {
+                if (interactive && revealDetails && panDigits.length >= 16) {
                     Ico(Ic.copy, 16.dp, tint = Color.White.copy(alpha = 0.75f))
                 }
             }
@@ -261,21 +274,23 @@ fun RealisticBankCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 // Expiry Date
-                if (!account.cardExpiry.isNullOrBlank()) {
+                if (revealDetails && !account.cardExpiry.isNullOrBlank()) {
                     Column {
                         T("انقضا", 9.5f, weight = 500, color = Color.White.copy(alpha = 0.75f))
-                        T(Money.fa(BankKit.formatExpiry(account.cardExpiry)), 13, weight = 700, color = Color.White)
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            T(Money.fa(BankKit.formatExpiry(account.cardExpiry)), 13, weight = 700, color = Color.White)
+                        }
                     }
                 } else {
                     Spacer(Modifier.width(1.dp))
                 }
 
                 // CVV2
-                if (!account.cardCvv2.isNullOrBlank()) {
+                if (revealDetails && !account.cardCvv2.isNullOrBlank()) {
                     Column(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .then(if (interactive) Modifier.clickable {
+                            .then(if (interactive && showCvv) Modifier.clickable {
                                 copyToClipboard("CVV2", account.cardCvv2, "کد CVV2 کپی شد")
                             } else Modifier)
                             .padding(horizontal = 4.dp),
@@ -294,12 +309,14 @@ fun RealisticBankCard(
                                 }
                             }
                         }
-                        T(
-                            text = if (showCvv) Money.fa(account.cardCvv2) else "•••",
-                            size = 13,
-                            weight = 700,
-                            color = Color.White,
-                        )
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            T(
+                                text = if (showCvv) Money.fa(account.cardCvv2) else "•••",
+                                size = 13,
+                                weight = 700,
+                                color = Color.White,
+                            )
+                        }
                     }
                 }
 
@@ -313,7 +330,7 @@ fun RealisticBankCard(
             }
 
             // ---- Optional IBAN Bar ----
-            if (!account.iban.isNullOrBlank()) {
+            if (revealDetails && !account.iban.isNullOrBlank()) {
                 val cleanIban = BankKit.cleanDigits(account.iban)
                 val fullIban = if (cleanIban.startsWith("IR")) cleanIban else "IR$cleanIban"
                 val displayIban = BankKit.formatIban(account.iban)
@@ -326,7 +343,7 @@ fun RealisticBankCard(
                         .background(Color.Black.copy(alpha = 0.2f))
                         .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
                         .then(if (interactive) Modifier.clickable {
-                            copyToClipboard("IBAN", fullIban, "شماره شبا کپی شد: $fullIban")
+                            copyToClipboard("IBAN", fullIban, "شماره شبا کپی شد")
                         } else Modifier)
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,

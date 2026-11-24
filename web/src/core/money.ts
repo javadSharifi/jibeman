@@ -28,12 +28,41 @@ export const Money = {
     return res;
   },
 
-  /** Parses user-typed toman string ("۱۲٬۵۰۰" / "12500") to rial (Long integer), or null. */
-  parseToman(s: string): number | null {
-    const raw = this.ascii(s).trim();
-    if (!raw || !/^\d+$/.test(raw) || raw.length > 13) return null;
-    const n = parseInt(raw, 10);
-    return isNaN(n) ? null : n * 10;
+  normalizeAmountInput(s: string, maxDigits = 13, allowNegative = false): string | null {
+    const raw = this.ascii(s).replace(/\s/g, '').replace('٫', '.').replace('−', '-');
+    const unsigned = allowNegative && raw.startsWith('-') ? raw.slice(1) : raw;
+    return /^\d*(?:\.\d?)?$/.test(unsigned) && unsigned.split('.')[0].length <= maxDigits ? raw : null;
+  },
+
+  formatAmountInput(raw: string): string {
+    const [whole, fraction] = raw.split('.');
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+  },
+
+  /** Converts toman to integer rial, including one optional fractional digit. */
+  parseToman(s: string, allowNegative = false): number | null {
+    const raw = this.normalizeAmountInput(s, 13, allowNegative);
+    if (!raw || !/^-?(?:\d+|\d*\.\d)$/.test(raw)) return null;
+    const magnitude = raw.startsWith('-') ? raw.slice(1) : raw;
+    const [whole, fraction] = magnitude.split('.');
+    const rial = Number(whole) * 10 + Number(fraction ?? 0);
+    return raw.startsWith('-') ? -rial : rial;
+  },
+
+  /** Format stored integer rial as an editable amount in toman without rounding. */
+  tomanInput(rial: number): string {
+    const magnitude = Math.abs(rial);
+    const whole = Math.floor(magnitude / 10);
+    const remainder = magnitude % 10;
+    return `${rial < 0 ? '-' : ''}${whole}${remainder ? `.${remainder}` : ''}`;
+  },
+
+  amountWords(rial: number): string {
+    const magnitude = Math.abs(rial);
+    const whole = this.words(Math.floor(magnitude / 10));
+    const remainder = magnitude % 10;
+    return `${rial < 0 ? 'منفی ' : ''}${whole} تومان${remainder ? ` و ${this.words(remainder)} ریال` : ''}`;
   },
 
   group(n: number): string {
@@ -48,11 +77,10 @@ export const Money = {
 
   /** rial -> "۱۸۵٬۰۰۰" toman */
   toman(rial: number, plus = false): string {
-    const t = Math.floor(rial / 10);
-    let sign = '';
-    if (t < 0) sign = '−';
-    else if (plus && t > 0) sign = '+';
-    return `${LRI}${sign}${this.group(t)}${PDI}`;
+    const sign = rial < 0 ? '−' : plus && rial > 0 ? '+' : '';
+    const [whole, remainder] = this.tomanInput(Math.abs(rial)).split('.');
+    const fraction = remainder ? `٫${this.fa(remainder)}` : '';
+    return `${LRI}${sign}${this.group(Number(whole))}${fraction}${PDI}`;
   },
 
   /** rial -> "۳۲٫۵ میلیون" / "۸۵۰ هزار" (toman) */

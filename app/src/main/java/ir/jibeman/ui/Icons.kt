@@ -41,6 +41,7 @@ object Ic {
     val swap by lazy { v("M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7") }
     val search by lazy { v(circle(11f, 11f, 7f), "m20 20-3.5-3.5") }
     val chevDown by lazy { v("m6 9 6 6 6-6") }
+    val chevUp by lazy { v("m18 15-6-6-6 6") }
     val chevLeft by lazy { v("m15 18-6-6 6-6") }
     val chevRight by lazy { v("m9 18 6-6-6-6") }
     val check by lazy { v("M20 6 9 17l-5-5") }

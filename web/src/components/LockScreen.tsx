@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Lock, Delete, Fingerprint } from 'lucide-react';
 import { verifyPin, isBiometricEnabled, verifyBiometric, recordActivity } from '../core/security';
+import { Money } from '../core/money';
 
 interface LockScreenProps {
   onUnlock: () => void;
@@ -68,8 +69,9 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
   // Physical keyboard listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key >= '0' && e.key <= '9') {
-        handleDigit(e.key);
+      const digit = Money.ascii(e.key);
+      if (/^\d$/.test(digit)) {
+        handleDigit(digit);
       } else if (e.key === 'Backspace') {
         handleDelete();
       }
@@ -79,7 +81,7 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
   }, [handleDigit, handleDelete]);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-between p-6 bg-[#070b14] text-white select-none overflow-hidden animate-fade-in">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-between safe-lock bg-[#070b14] text-white select-none overflow-x-hidden overflow-y-auto animate-fade-in">
       {/* Background ambient lighting */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[340px] h-[340px] bg-primary/20 rounded-full blur-[100px] pointer-events-none" />
 

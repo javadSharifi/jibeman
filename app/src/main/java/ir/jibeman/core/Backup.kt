@@ -11,6 +11,8 @@ import ir.jibeman.core.db.DebtDir
 import ir.jibeman.core.db.DebtPayment
 import ir.jibeman.core.db.Installment
 import ir.jibeman.core.db.Loan
+import ir.jibeman.core.db.SavingsCommitment
+import ir.jibeman.core.db.SavingsPayment
 import ir.jibeman.core.db.Goal
 import ir.jibeman.core.db.GoalEntry
 import ir.jibeman.core.db.Person
@@ -21,18 +23,25 @@ import ir.jibeman.core.db.SplitMember
 import ir.jibeman.core.db.SplitShare
 import ir.jibeman.core.db.TxType
 import ir.jibeman.core.db.Txn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Plain JSON backup of everything. Import is a trust boundary: every field is validated and the
+ * Password-encrypted backup of the local database. Import is a trust boundary: every field is validated and the
  * replace runs in one DB transaction, so a bad file never leaves half-imported data.
  */
 object Backup {
     private const val APP = "jibeman"
     private const val VERSION = 5 // 2: + rules, 3: + rule conditions, loans, debts, 4: + people, goals, split, 5: + card details
 
-    suspend fun export(dao: JDao): String = JSONObject()
+    suspend fun export(dao: JDao, password: String): String {
+        val payload = exportJson(dao)
+        return withContext(Dispatchers.Default) { BackupCipher.encrypt(payload, password) }
+    }
+
+    private suspend fun exportJson(dao: JDao): String = JSONObject()
         .put("app", APP).put("version", VERSION).put("exportedAt", System.currentTimeMillis())
         .put("accounts", JSONArray(dao.allAccounts().map {
             JSONObject().put("id", it.id).put("name", it.name).put("type", it.type).put("bankCode", it.bankCode)
@@ -40,6 +49,7 @@ object Backup {
                 .put("archived", it.archived).put("sortOrder", it.sortOrder)
                 .put("cardNumber", it.cardNumber).put("cardExpiry", it.cardExpiry)
                 .put("cardCvv2", it.cardCvv2).put("iban", it.iban).put("cardColor", it.cardColor)
+                .put("isSavings", it.isSavings)
         }))
         .put("cards", JSONArray(dao.allCards().map { JSONObject().put("id", it.id).put("accountId", it.accountId).put("last4", it.last4) }))
         .put("categories", JSONArray(dao.allCategories().map {
@@ -57,10 +67,12 @@ object Backup {
         }))
         .put("loans", JSONArray(dao.allLoans().map {
             JSONObject().put("id", it.id).put("title", it.title).put("lender", it.lender).put("principal", it.principal).put("installment", it.installment)
-                .put("count", it.count).put("firstDueAt", it.firstDueAt).put("accountId", it.accountId).put("note", it.note).put("createdAt", it.createdAt)
+                .put("count", it.count).put("firstDueAt", it.firstDueAt).put("accountId", it.accountId).put("receiveAccountId", it.receiveAccountId)
+                .put("note", it.note).put("createdAt", it.createdAt)
         }))
         .put("installments", JSONArray(dao.allInstallments().map {
-            JSONObject().put("id", it.id).put("loanId", it.loanId).put("n", it.n).put("dueAt", it.dueAt).put("amount", it.amount).put("paidTxnId", it.paidTxnId)
+            JSONObject().put("id", it.id).put("loanId", it.loanId).put("n", it.n).put("dueAt", it.dueAt).put("amount", it.amount)
+                .put("paidTxnId", it.paidTxnId).put("paidAt", it.paidAt)
         }))
         .put("debts", JSONArray(dao.allDebts().map {
             JSONObject().put("id", it.id).put("direction", it.direction).put("person", it.person).put("amount", it.amount).put("dueAt", it.dueAt)
@@ -84,13 +96,33 @@ object Backup {
         .put("debtPayments", JSONArray(dao.allPayments().map {
             JSONObject().put("id", it.id).put("debtId", it.debtId).put("amount", it.amount).put("at", it.at).put("txnId", it.txnId)
         }))
+        .put("savingsCommitments", JSONArray(dao.allSavingsCommitments().map {
+            JSONObject().put("id", it.id).put("accountId", it.accountId).put("txnId", it.txnId)
+                .put("amount", it.amount).put("paidAmount", it.paidAmount).put("note", it.note).put("createdAt", it.createdAt)
+        }))
+        .put("savingsPayments", JSONArray(dao.allSavingsPayments().map {
+            JSONObject().put("id", it.id).put("commitmentId", it.commitmentId).put("amount", it.amount).put("at", it.at).put("txnId", it.txnId)
+        }))
         .toString()
 
     class BadFile(msg: String) : Exception(msg)
 
     /** Returns the number of transactions imported. Throws [BadFile] with a user-facing message. */
-    suspend fun import(dao: JDao, json: String): Int {
-        val o = try { JSONObject(json) } catch (e: Exception) { throw BadFile("فایل خراب است یا JSON نیست") }
+    fun isEncrypted(text: String): Boolean = BackupCipher.isEncrypted(JSONObject(text))
+
+    suspend fun import(dao: JDao, json: String, password: String = ""): Int {
+        val o = try {
+            withContext(Dispatchers.Default) {
+                val file = JSONObject(json)
+                if (BackupCipher.isEncrypted(file)) JSONObject(BackupCipher.decrypt(file, password)) else file
+            }
+        } catch (_: BackupCipher.BadPassword) {
+            throw BadFile("عبارت پشتیبان اشتباه است یا فایل آسیب دیده است.")
+        } catch (_: IllegalArgumentException) {
+            throw BadFile("قالب یا نسخهٔ فایل پشتیبان معتبر نیست.")
+        } catch (_: org.json.JSONException) {
+            throw BadFile("فایل خراب است یا JSON نیست.")
+        }
         if (o.optString("app") != APP) throw BadFile("این فایل پشتیبان «جیب من» نیست")
         if (o.optInt("version", 0) !in 1..VERSION) throw BadFile("نسخه فایل با این برنامه سازگار نیست")
         try {
@@ -101,6 +133,7 @@ object Backup {
                     style = it.optInt("style", 0), archived = it.optBoolean("archived", false), sortOrder = it.optInt("sortOrder", 0),
                     cardNumber = it.str("cardNumber"), cardExpiry = it.str("cardExpiry"),
                     cardCvv2 = it.str("cardCvv2"), iban = it.str("iban"), cardColor = it.lng("cardColor"),
+                    isSavings = it.optBoolean("isSavings", false),
                 )
             }
             val cards = o.getJSONArray("cards").objs().map {
@@ -134,10 +167,11 @@ object Backup {
                     it.getLong("id"), it.getString("title").take(100), it.str("lender"), it.getLong("principal").also { a -> check(a >= 0) },
                     it.getLong("installment").also { a -> check(a > 0) }, it.getInt("count").also { c -> check(c in 1..600) },
                     it.getLong("firstDueAt"), it.lng("accountId"), it.str("note"), it.optLong("createdAt", System.currentTimeMillis()),
+                    receiveAccountId = it.lng("receiveAccountId"),
                 )
             }
             val installments = (o.optJSONArray("installments") ?: JSONArray()).objs().map {
-                Installment(it.getLong("id"), it.getLong("loanId"), it.getInt("n"), it.getLong("dueAt"), it.getLong("amount").also { a -> check(a > 0) }, it.lng("paidTxnId"))
+                Installment(it.getLong("id"), it.getLong("loanId"), it.getInt("n"), it.getLong("dueAt"), it.getLong("amount").also { a -> check(a > 0) }, it.lng("paidTxnId"), it.lng("paidAt"))
             }
             val debts = (o.optJSONArray("debts") ?: JSONArray()).objs().map {
                 Debt(
@@ -160,12 +194,20 @@ object Backup {
                     SplitExpense(it.getLong("id"), it.getLong("groupId"), it.getString("title").take(60), pos(it, "amount"), it.getLong("payerId"), it.getLong("at"), it.optBoolean("settlement", false))
                 },
                 shares = arr("splitShares").map { SplitShare(it.getLong("id"), it.getLong("expenseId"), it.getLong("memberId"), it.getLong("amount").also { a -> check(a >= 0) }) },
+                savingsCommitments = arr("savingsCommitments").map {
+                    SavingsCommitment(it.getLong("id"), it.getLong("accountId"), it.lng("txnId"), it.getLong("amount"), it.optLong("paidAmount", 0), it.str("note"), it.optLong("createdAt", 0))
+                },
+                savingsPayments = arr("savingsPayments").map {
+                    SavingsPayment(it.getLong("id"), it.getLong("commitmentId"), it.getLong("amount"), it.getLong("at"), it.lng("txnId"))
+                },
             )
             val payments = (o.optJSONArray("debtPayments") ?: JSONArray()).objs().map {
                 DebtPayment(it.getLong("id"), it.getLong("debtId"), it.getLong("amount").also { a -> check(a > 0) }, it.getLong("at"), it.lng("txnId"))
             }
             dao.replaceAll(accounts, cards, categories, txns, rules, loans, installments, debts, payments, p4) // FK violations throw here and roll back
             return txns.size
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: BadFile) {
             throw e
         } catch (e: Exception) {

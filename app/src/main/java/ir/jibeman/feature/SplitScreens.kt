@@ -53,6 +53,7 @@ import ir.jibeman.ui.Chip
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Divider
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.Group
@@ -255,7 +256,7 @@ private fun AddSplitExpenseDialog(groupId: Long, members: List<MemberRow>, onDis
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field(title, { title = it }, "برای چه؟ مثلاً شام")
-                Field(text, { text = it }, "مبلغ کل (تومان)", number = true)
+                AmountField(text, { text = it }, "مبلغ کل (تومان)")
                 Label("چه کسی پرداخت کرد؟")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { members.forEach { m -> Chip(m.label(), payer == m.m.id) { payer = m.m.id } } }
                 Label("بین چه کسانی؟ (مساوی)")

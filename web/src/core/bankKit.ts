@@ -57,10 +57,104 @@ export const BankKit = {
     return digits.match(/.{1,4}/g)?.join(' ') || digits;
   },
 
+  normalizeYear(year?: string | null): string {
+    const digits = this.cleanDigits(year);
+    if (digits.length === 2) {
+      const y = parseInt(digits, 10);
+      return y >= 70 ? `13${digits}` : `14${digits}`;
+    }
+    return digits;
+  },
+
+  normalizeMonth(month?: string | null): string {
+    const digits = this.cleanDigits(month);
+    const m = parseInt(digits, 10);
+    return m >= 1 && m <= 12 ? String(m).padStart(2, '0') : digits;
+  },
+
+  isMonthValid(month?: string | null): boolean {
+    const digits = this.cleanDigits(month);
+    if (!digits) return true;
+    const m = parseInt(digits, 10);
+    return m >= 1 && m <= 12;
+  },
+
+  isYearValid(year?: string | null): boolean {
+    const digits = this.cleanDigits(year);
+    if (!digits) return true;
+    if (digits.length !== 2 && digits.length !== 4) return false;
+    const y = parseInt(this.normalizeYear(digits), 10);
+    return y >= 1370 && y <= 1499;
+  },
+
+  buildExpiry(month?: string | null, year?: string | null): string {
+    const cleanM = this.cleanDigits(month);
+    const cleanY = this.cleanDigits(year);
+    if (!cleanM && !cleanY) return '';
+    const normY = cleanY ? this.normalizeYear(cleanY) : '';
+    const normM = cleanM ? this.normalizeMonth(cleanM) : '';
+    if (normY && normM) return `${normY}/${normM}`;
+    return normY || normM || '';
+  },
+
+  parseExpiry(value?: string | null): { month: string; year: string } {
+    if (!value) return { month: '', year: '' };
+    const normalized = value.trim();
+    if (/[/\s\\-]/.test(normalized)) {
+      const parts = normalized.split(/[/\s\\-]+/).filter(Boolean);
+      if (parts.length >= 2) {
+        const d1 = this.cleanDigits(parts[0]);
+        const d2 = this.cleanDigits(parts[1]);
+        if (d1.length === 4) {
+          return { month: this.normalizeMonth(d2), year: d1 };
+        }
+        if (d2.length === 4) {
+          return { month: this.normalizeMonth(d1), year: d2 };
+        }
+        // Legacy 2-digit format MM/YY
+        return { month: this.normalizeMonth(d1), year: this.normalizeYear(d2) };
+      }
+    }
+    const digits = this.cleanDigits(normalized);
+    if (digits.length === 6) {
+      return {
+        year: digits.slice(0, 4),
+        month: this.normalizeMonth(digits.slice(4, 6)),
+      };
+    }
+    if (digits.length === 4) {
+      if (digits.startsWith('13') || digits.startsWith('14')) {
+        return { month: '', year: digits };
+      }
+      return {
+        month: this.normalizeMonth(digits.slice(0, 2)),
+        year: this.normalizeYear(digits.slice(2, 4)),
+      };
+    }
+    if (digits.length === 2) {
+      const n = parseInt(digits, 10);
+      if (n >= 1 && n <= 12) {
+        return { month: this.normalizeMonth(digits), year: '' };
+      }
+      return { month: '', year: this.normalizeYear(digits) };
+    }
+    return { month: '', year: '' };
+  },
+
   formatExpiry(value?: string | null): string {
-    const digits = this.cleanDigits(value).slice(0, 4);
-    if (digits.length <= 2) return digits;
-    return `${digits.slice(0, 2)} / ${digits.slice(2)}`;
+    if (!value) return '';
+    const { month, year } = this.parseExpiry(value);
+    const shortYear = year ? (year.length === 4 ? year.slice(-2) : year) : '';
+    if (month && shortYear) return `${shortYear}/${month}`;
+    return shortYear || month || '';
+  },
+
+  isExpiryValid(value?: string | null): boolean {
+    if (!value) return true;
+    const { month, year } = this.parseExpiry(value);
+    if (month && !this.isMonthValid(month)) return false;
+    if (year && !this.isYearValid(year)) return false;
+    return true;
   },
 
   formatIban(value?: string | null): string {

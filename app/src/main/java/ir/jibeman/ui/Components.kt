@@ -29,8 +29,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,10 +48,17 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -319,6 +328,76 @@ fun Empty(text: String, action: String? = null, onAction: () -> Unit = {}) = Col
 fun Field(
     value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
     number: Boolean = false, ltr: Boolean = false, leading: ImageVector? = null,
+    keyboardType: KeyboardType = if (number) KeyboardType.Number else KeyboardType.Text,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+) = FieldFrame(value.isEmpty(), placeholder, modifier, leading) {
+    BasicTextField(
+        value, { onChange(if (number) Money.ascii(it) else it) }, singleLine = true, cursorBrush = SolidColor(C.lime),
+        textStyle = fieldTextStyle(ltr), keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        visualTransformation = visualTransformation,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+fun AmountField(
+    value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
+    allowNegative: Boolean = false, maxDigits: Int = 13,
+) {
+    var editor by remember { mutableStateOf(TextFieldValue(value)) }
+    val current = if (editor.text == value) editor else TextFieldValue(value, TextRange(value.length))
+    SideEffect { if (editor.text != value) editor = current }
+    Column(modifier) {
+        FieldFrame(value.isEmpty(), placeholder, Modifier, null) {
+            BasicTextField(
+                value = current,
+                onValueChange = change@{ edited ->
+                    val raw = Money.normalizeAmountInput(edited.text, maxDigits, allowNegative) ?: return@change
+                    fun rawOffset(offset: Int) = Money.ascii(edited.text.take(offset)).count { !it.isWhitespace() }
+                    editor = if (edited.text == raw) edited else TextFieldValue(
+                        raw, TextRange(rawOffset(edited.selection.start), rawOffset(edited.selection.end)),
+                    )
+                    if (value != raw) onChange(raw)
+                },
+                singleLine = true,
+                cursorBrush = SolidColor(C.lime),
+                textStyle = fieldTextStyle(ltr = true),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                visualTransformation = GroupedAmount,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Money.parseToman(value, allowNegative)?.let {
+            T(Money.amountWords(it), 11, color = C.muted, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+internal val GroupedAmount = VisualTransformation { text ->
+    val formatted = Money.formatAmountInput(text.text)
+    val toDisplay = IntArray(text.length + 1)
+    val toRaw = IntArray(formatted.length + 1)
+    var raw = 0
+    formatted.forEachIndexed { index, char ->
+        if (char != ',') toDisplay[++raw] = index + 1
+        toRaw[index + 1] = raw
+    }
+    TransformedText(AnnotatedString(formatted), object : OffsetMapping {
+        override fun originalToTransformed(offset: Int) = toDisplay[offset]
+        override fun transformedToOriginal(offset: Int) = toRaw[offset]
+    })
+}
+
+@Composable
+private fun fieldTextStyle(ltr: Boolean) = TextStyle(
+    color = C.ink, fontSize = 14.sp, fontFamily = Vazir, fontWeight = FontWeight.Medium,
+    textAlign = if (ltr) TextAlign.Left else TextAlign.Start,
+    textDirection = if (ltr) TextDirection.Ltr else TextDirection.Unspecified,
+)
+
+@Composable
+private fun FieldFrame(
+    empty: Boolean, placeholder: String, modifier: Modifier, leading: ImageVector?, input: @Composable () -> Unit,
 ) = Row(
     modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(15.dp)).background(C.surface)
         .border(1.dp, C.line, RoundedCornerShape(15.dp)).padding(horizontal = 14.dp),
@@ -326,14 +405,8 @@ fun Field(
 ) {
     if (leading != null) Ico(leading, 18.dp, C.muted)
     Box(Modifier.weight(1f)) {
-        if (value.isEmpty()) T(placeholder, 13, color = C.muted, maxLines = 1)
-        BasicTextField(
-            value, onChange, singleLine = true, cursorBrush = SolidColor(C.lime),
-            textStyle = TextStyle(color = C.ink, fontSize = 14.sp, fontFamily = Vazir, fontWeight = FontWeight.Medium,
-                textAlign = if (ltr) TextAlign.Left else TextAlign.Start),
-            keyboardOptions = if (number) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (empty) T(placeholder, 13, color = C.muted, maxLines = 1)
+        input()
     }
 }
 
@@ -407,7 +480,7 @@ fun TxnGroup(rows: List<TxnRow>, hide: Boolean, onClick: (TxnRow) -> Unit) = Gro
 
 // ---------- bank cards ----------
 
-fun accTypeLabel(a: Account) = when (a.type) {
+fun accTypeLabel(a: Account) = if (a.isSavings) "پس‌انداز" else when (a.type) {
     AccType.CASH -> "نقد"
     AccType.WALLET -> "کیف پول"
     else -> "بانکی"

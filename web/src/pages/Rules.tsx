@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, X, Wand2, Trash2 } from 'lucide-react';
 import { db, type Rule, type Category } from '../core/db';
 import { HeaderBar, CategoryIcon } from '../components/UI';
+import { Select } from '../components/Select';
 
 interface RuleWithCategory extends Rule {
   categoryName?: string;
@@ -131,7 +132,7 @@ export function Rules({ onBack }: { onBack: () => void }) {
 
       {/* Add Rule Modal */}
       {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
             <div className="flex items-center justify-between border-b border-line pb-2">
               <h2 className="text-sm font-bold text-white">تعریف قانون جدید</h2>
@@ -153,15 +154,18 @@ export function Rules({ onBack }: { onBack: () => void }) {
 
             <div>
               <label className="text-[11px] text-muted block mb-1">دسته‌بندی خودکار شود به:</label>
-              <select
-                value={selectedCatId || ''}
-                onChange={(e) => setSelectedCatId(Number(e.target.value))}
-                className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-              >
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.kind === 'EXPENSE' ? 'هزینه' : 'درآمد'})</option>
-                ))}
-              </select>
+              <Select
+                value={selectedCatId || undefined}
+                onChange={(val) => setSelectedCatId(Number(val))}
+                options={categories
+                  .filter((c): c is Category & { id: number } => c.id != null)
+                  .map(c => ({
+                    value: c.id,
+                    label: c.name,
+                    sublabel: c.kind === 'EXPENSE' ? 'هزینه' : 'درآمد',
+                  }))}
+                placeholder="انتخاب دسته‌بندی"
+              />
             </div>
 
             <button

@@ -75,7 +75,8 @@ fun HomeScreen(go: (Route) -> Unit, add: (AddReq) -> Unit) {
     val nextInst by remember { dao.nextInstallment() }.collectAsStateWithLifecycle(null)
     val nextDebt by remember { dao.nextDebt() }.collectAsStateWithLifecycle(null)
     val loans by remember { dao.loans() }.collectAsStateWithLifecycle(emptyList())
-    val total = accounts.sumOf { it.balance }
+    val spendableTotal = accounts.filter { !it.account.isSavings }.sumOf { it.balance }
+    val savingsTotal = accounts.filter { it.account.isSavings }.sumOf { it.balance }
 
     LazyColumn(Modifier.fillMaxSize().background(C.bg), contentPadding = BottomSpace) {
         item {
@@ -97,9 +98,9 @@ fun HomeScreen(go: (Route) -> Unit, add: (AddReq) -> Unit) {
                         )
                     }
                 }
-                T("موجودی کل", 12, color = C.t2, modifier = Modifier.padding(top = 18.dp))
+                T("موجودی قابل خرج", 12, color = C.t2, modifier = Modifier.padding(top = 18.dp))
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    T(amount(total, hide), 34, 800, maxLines = 1)
+                    T(amount(spendableTotal, hide), 34, 800, maxLines = 1)
                     T("تومان", 14, color = C.ink.copy(alpha = 0.55f), modifier = Modifier.padding(bottom = 8.dp))
                 }
                 val net = m.income - m.expense
@@ -112,7 +113,28 @@ fun HomeScreen(go: (Route) -> Unit, add: (AddReq) -> Unit) {
                     Ico(if (net >= 0) Ic.trend else Ic.trendDown, 15.dp, c)
                     T("خالص ${Jalali.MONTHS[j.m - 1]} ${if (hide) Money.HIDDEN else (if (net > 0) "⁦+⁩" else "") + Money.short(net)} تومان", 11, 600, c)
                 }
-                Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                Row(
+                    Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(C.surface.copy(alpha = 0.65f)).border(1.dp, C.line, RoundedCornerShape(14.dp))
+                        .clickable { go(Route.Accounts) }.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Ico(Ic.target, 17.dp, C.accent)
+                        Column {
+                            T("کل پس‌انداز", 12.5f, 700)
+                            T("تفکیک‌شده از موجودی قابل‌خرج", 10, color = C.t2)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        T(amount(savingsTotal, hide), 16, 800, color = C.accent)
+                        T("تومان", 11, color = C.t2, modifier = Modifier.padding(bottom = 2.dp))
+                    }
+                }
+
+                Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ActionPill("ثبت هزینه", Ic.out, Modifier.weight(1f)) { add(AddReq(TxType.EXPENSE)) }
                     ActionPill("ثبت درآمد", Ic.inn, Modifier.weight(1f)) { add(AddReq(TxType.INCOME)) }
                 }

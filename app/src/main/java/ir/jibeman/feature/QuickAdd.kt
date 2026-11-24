@@ -50,12 +50,14 @@ import ir.jibeman.app
 import ir.jibeman.core.Jalali
 import ir.jibeman.core.Money
 import ir.jibeman.core.db.AccountBalance
+import ir.jibeman.core.db.SavingsCommitment
 import ir.jibeman.core.db.TxType
 import ir.jibeman.core.db.Txn
 import ir.jibeman.ui.C
 import ir.jibeman.ui.CatIcon
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.Ic
@@ -66,7 +68,7 @@ import ir.jibeman.ui.Segmented
 import ir.jibeman.ui.T
 import kotlinx.coroutines.launch
 
-private const val MAX_TOMAN = 999_999_999_999L
+private const val MAX_TOMAN_DIGITS = 12
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,7 +79,7 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
     val ctx = LocalContext.current
     var editing by remember { mutableStateOf<Txn?>(null) }
     var type by remember { mutableStateOf(req.type) }
-    var toman by remember { mutableLongStateOf(0) }
+    var amountText by remember { mutableStateOf("") }
     var accountId by remember { mutableLongStateOf(req.accountId) }
     var toId by remember { mutableLongStateOf(0) }
     var catId by remember { mutableStateOf<Long?>(null) }
@@ -85,20 +87,26 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
     var at by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var pickDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var returnCommitment by remember { mutableStateOf(true) }
     val accounts by remember { dao.balances() }.collectAsStateWithLifecycle(null)
     val cats by remember(type) { dao.categories(if (type == TxType.INCOME) "INCOME" else "EXPENSE") }.collectAsStateWithLifecycle(emptyList())
 
+    val selectedAcc = accounts?.find { it.account.id == accountId }?.account
+    val targetAcc = accounts?.find { it.account.id == toId }?.account
+    val isWithdrawalFromSavings = selectedAcc?.isSavings == true && (type == TxType.EXPENSE || (type == TxType.TRANSFER && targetAcc?.isSavings != true))
+
     LaunchedEffect(req.txnId) {
         if (req.txnId != 0L) dao.txn(req.txnId)?.let {
-            editing = it; type = it.type; toman = it.amount / 10; accountId = it.accountId
+            editing = it; type = it.type; amountText = Money.tomanInput(it.amount); accountId = it.accountId
             toId = it.toAccountId ?: 0; catId = it.categoryId; title = it.title.orEmpty(); at = it.occurredAt
         }
     }
     LaunchedEffect(accounts) { if (accountId == 0L) accountId = accounts?.firstOrNull()?.account?.id ?: 0 }
 
     fun save() {
+        val rial = Money.parseToman(amountText) ?: 0
         val err = when {
-            toman <= 0 -> "مبلغ را وارد کن"
+            rial <= 0 -> "مبلغ را وارد کن"
             accountId == 0L -> "حساب را انتخاب کن"
             type == TxType.TRANSFER && (toId == 0L || toId == accountId) -> "حساب مقصد را انتخاب کن"
             else -> null
@@ -106,12 +114,32 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
         if (err != null) return Toast.makeText(ctx, err, Toast.LENGTH_SHORT).show()
         val base = editing ?: Txn(type = type, amount = 0, accountId = 0, occurredAt = at)
         val t = base.copy(
-            type = type, amount = toman * 10, accountId = accountId,
+            type = type, amount = rial, accountId = accountId,
             toAccountId = if (type == TxType.TRANSFER) toId else null,
             categoryId = if (type == TxType.TRANSFER) null else catId,
             title = title.trim().ifBlank { null }, occurredAt = at,
         )
-        scope.launch { dao.upsertTxn(t); onDone(false) }
+        scope.launch {
+            val txnId = if (editing != null) {
+                dao.upsertTxn(t)
+                editing!!.id
+            } else {
+                dao.insertTxn(t)
+            }
+            if (isWithdrawalFromSavings && returnCommitment && editing == null) {
+                dao.insertSavingsCommitment(
+                    SavingsCommitment(
+                        accountId = accountId,
+                        txnId = txnId,
+                        amount = rial,
+                        paidAmount = 0,
+                        note = title.trim().ifBlank { if (type == TxType.TRANSFER) "انتقال از پس‌انداز" else "برداشت از پس‌انداز" },
+                        createdAt = at,
+                    )
+                )
+            }
+            onDone(false)
+        }
     }
 
     ModalBottomSheet(
@@ -131,14 +159,11 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
                 if (isAdjust) T("تعدیل موجودی", 15, 800, modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
                 else Segmented(listOf(TxType.EXPENSE to "هزینه", TxType.INCOME to "درآمد", TxType.TRANSFER to "انتقال"), type) { type = it; catId = null }
 
-                // amount: caret on the right of the digits, unit on the left
-                Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(2.dp, 34.dp).background(C.lime))
-                    T(Money.toman(toman * 10), 40, 800, if (toman == 0L) C.muted else C.ink, modifier = Modifier.padding(horizontal = 6.dp))
-                    T("تومان", 14, color = C.ink.copy(alpha = 0.55f))
-                }
-                T(if (toman == 0L) "مبلغ را با صفحه‌کلید پایین وارد کن" else Money.words(toman) + " تومان", 12, color = C.muted,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp), align = TextAlign.Center, maxLines = 2)
+                T("مبلغ (تومان)", 12, color = C.muted, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+                AmountField(
+                    amountText, { amountText = it }, "۰",
+                    allowNegative = isAdjust, maxDigits = MAX_TOMAN_DIGITS,
+                )
 
                 if (!isAdjust) {
                     Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -164,6 +189,28 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
                         }
                     }
                     Field(title, { title = it }, if (type == TxType.TRANSFER) "توضیح (اختیاری)" else "عنوان یا توضیح، مثلاً اسنپ (اختیاری)", Modifier.padding(top = 10.dp), leading = Ic.pen)
+                    if (isWithdrawalFromSavings) {
+                        Row(
+                            Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                                .background(C.lime.copy(alpha = 0.12f)).border(1.dp, C.lime.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                                .clickable { returnCommitment = !returnCommitment }.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Box(
+                                Modifier.size(20.dp).clip(RoundedCornerShape(6.dp))
+                                    .background(if (returnCommitment) C.lime else Color.Transparent)
+                                    .border(1.5.dp, if (returnCommitment) C.lime else C.line, RoundedCornerShape(6.dp)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (returnCommitment) Ico(Ic.check, 14.dp, C.onLime)
+                            }
+                            Column(Modifier.weight(1f)) {
+                                T("این مبلغ را به پس‌انداز برمی‌گردانم", 12.5f, 700, C.accent)
+                                T("ثبت تعهد بازگشت (طلب از خود) جهت بازگرداندن در آینده", 10.5f, color = C.t2)
+                            }
+                        }
+                    }
                 }
 
                 // keypad stays LTR: 1 2 3 left to right, like every phone dialer
@@ -174,10 +221,10 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
                                 row.forEach { k ->
                                     Box(
                                         Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(12.dp)).clickable {
-                                            toman = when (k) {
-                                                "<" -> toman / 10
-                                                "000" -> if (toman * 1000 <= MAX_TOMAN) toman * 1000 else toman
-                                                else -> (toman * 10 + k.toLong()).takeIf { it <= MAX_TOMAN } ?: toman
+                                            amountText = when {
+                                                k == "<" -> amountText.dropLast(1)
+                                                amountText.isEmpty() && (k == "0" || k == "000") -> amountText
+                                                else -> Money.normalizeAmountInput(amountText + k, MAX_TOMAN_DIGITS, isAdjust) ?: amountText
                                             }
                                         },
                                         contentAlignment = Alignment.Center,
@@ -206,7 +253,10 @@ fun QuickAddSheet(req: AddReq, onDone: (goToAccounts: Boolean) -> Unit) {
 }
 
 @Composable
-fun AccountPicker(list: List<AccountBalance>, selected: Long, prefix: String?, modifier: Modifier, onPick: (Long) -> Unit) {
+fun AccountPicker(
+    list: List<AccountBalance>, selected: Long, prefix: String?, modifier: Modifier,
+    emptyOption: String? = null, onPick: (Long) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     val a = list.firstOrNull { it.account.id == selected }?.account
     Box(modifier) {
@@ -217,10 +267,13 @@ fun AccountPicker(list: List<AccountBalance>, selected: Long, prefix: String?, m
         ) {
             if (prefix != null) T(prefix, 11, color = C.muted)
             if (a != null) Mono(a.bankCode, a.type, 26.dp)
-            T(a?.name ?: "انتخاب حساب", 12.5f, 600, if (a == null) C.muted else C.ink, Modifier.weight(1f), maxLines = 1)
+            T(a?.name ?: emptyOption ?: "انتخاب حساب", 12.5f, 600, if (a == null) C.muted else C.ink, Modifier.weight(1f), maxLines = 1)
             Ico(Ic.chevDown, 15.dp, C.muted)
         }
         DropdownMenu(open, { open = false }, containerColor = C.sheet) {
+            emptyOption?.let {
+                DropdownMenuItem(text = { T(it, 13, 600) }, onClick = { onPick(0); open = false })
+            }
             list.forEach { ab ->
                 DropdownMenuItem(
                     text = {

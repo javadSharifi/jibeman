@@ -19,6 +19,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Upsert
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -57,6 +58,7 @@ data class Account(
     @ColumnInfo(defaultValue = "NULL") val cardCvv2: String? = null,
     @ColumnInfo(defaultValue = "NULL") val iban: String? = null,
     @ColumnInfo(defaultValue = "NULL") val cardColor: Long? = null,
+    @ColumnInfo(defaultValue = "0") val isSavings: Boolean = false,
 )
 
 @Entity(
@@ -149,8 +151,11 @@ data class Rule(
 /** A loan repaid in fixed installments (amounts as printed by the bank; we don't guess interest). */
 @Entity(
     tableName = "loan",
-    foreignKeys = [ForeignKey(entity = Account::class, parentColumns = ["id"], childColumns = ["accountId"], onDelete = ForeignKey.SET_NULL)],
-    indices = [Index("accountId")],
+    foreignKeys = [
+        ForeignKey(entity = Account::class, parentColumns = ["id"], childColumns = ["accountId"], onDelete = ForeignKey.SET_NULL),
+        ForeignKey(entity = Account::class, parentColumns = ["id"], childColumns = ["receiveAccountId"], onDelete = ForeignKey.SET_NULL),
+    ],
+    indices = [Index("accountId"), Index("receiveAccountId")],
 )
 data class Loan(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -163,7 +168,11 @@ data class Loan(
     val accountId: Long?, // default account installments are paid from
     val note: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
-)
+    val receiveAccountId: Long? = null,
+) {
+    fun suggestedPaymentAccount(availableIds: Collection<Long>): Long? =
+        accountId?.takeIf { it in availableIds } ?: receiveAccountId?.takeIf { it in availableIds }
+}
 
 /** Paid exactly when [paidTxnId] is set; deleting that transaction un-pays it (FK SET_NULL). */
 @Entity(
@@ -181,6 +190,7 @@ data class Installment(
     val dueAt: Long,
     val amount: Long,
     val paidTxnId: Long? = null,
+    val paidAt: Long? = null,
 )
 
 object DebtDir {
@@ -319,6 +329,40 @@ data class DebtPayment(
     val txnId: Long?,
 )
 
+@Entity(
+    tableName = "savings_commitment",
+    foreignKeys = [
+        ForeignKey(entity = Account::class, parentColumns = ["id"], childColumns = ["accountId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = Txn::class, parentColumns = ["id"], childColumns = ["txnId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("accountId"), Index("txnId")],
+)
+data class SavingsCommitment(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val accountId: Long,
+    val txnId: Long? = null,
+    val amount: Long,
+    @ColumnInfo(defaultValue = "0") val paidAmount: Long = 0,
+    val note: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "savings_payment",
+    foreignKeys = [
+        ForeignKey(entity = SavingsCommitment::class, parentColumns = ["id"], childColumns = ["commitmentId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = Txn::class, parentColumns = ["id"], childColumns = ["txnId"], onDelete = ForeignKey.SET_NULL),
+    ],
+    indices = [Index("commitmentId"), Index("txnId")],
+)
+data class SavingsPayment(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val commitmentId: Long,
+    val amount: Long,
+    val at: Long,
+    val txnId: Long? = null,
+)
+
 data class LoanRow(
     @Embedded val loan: Loan,
     val paidCount: Int,
@@ -326,7 +370,14 @@ data class LoanRow(
     val nextAmount: Long?,
 )
 
-data class InstallmentRow(@Embedded val i: Installment, val paidAt: Long?, val loanTitle: String)
+data class InstallmentRow(
+    @Embedded val i: Installment,
+    val txnPaidAt: Long?,
+    val loanTitle: String,
+) {
+    val paidAt: Long? get() = txnPaidAt ?: i.paidAt
+    val isPaid: Boolean get() = i.paidTxnId != null || i.paidAt != null
+}
 
 data class DebtRow(@Embedded val debt: Debt, val remaining: Long)
 
@@ -488,38 +539,45 @@ interface JDao {
 
     // ---- loans ----
     @Query(
-        "SELECT l.*, (SELECT COUNT(*) FROM installment i WHERE i.loanId = l.id AND i.paidTxnId IS NOT NULL) AS paidCount, " +
-            "(SELECT MIN(i.dueAt) FROM installment i WHERE i.loanId = l.id AND i.paidTxnId IS NULL) AS nextDue, " +
-            "(SELECT i.amount FROM installment i WHERE i.loanId = l.id AND i.paidTxnId IS NULL ORDER BY i.dueAt LIMIT 1) AS nextAmount " +
+        "SELECT l.*, " +
+            "(SELECT COUNT(*) FROM installment i WHERE i.loanId = l.id AND (i.paidTxnId IS NOT NULL OR i.paidAt IS NOT NULL)) AS paidCount, " +
+            "(SELECT MIN(i.dueAt) FROM installment i WHERE i.loanId = l.id AND i.paidTxnId IS NULL AND i.paidAt IS NULL) AS nextDue, " +
+            "(SELECT i.amount FROM installment i WHERE i.loanId = l.id AND i.paidTxnId IS NULL AND i.paidAt IS NULL ORDER BY i.dueAt LIMIT 1) AS nextAmount " +
             "FROM loan l ORDER BY nextDue IS NULL, nextDue"
     )
     fun loans(): Flow<List<LoanRow>>
     @Query("SELECT * FROM loan WHERE id = :id") suspend fun loan(id: Long): Loan?
-    @Query("SELECT i.*, t.occurredAt AS paidAt, l.title AS loanTitle FROM installment i JOIN loan l ON l.id = i.loanId LEFT JOIN txn t ON t.id = i.paidTxnId WHERE i.loanId = :loanId ORDER BY i.n")
+    @Query("SELECT i.*, t.occurredAt AS txnPaidAt, l.title AS loanTitle FROM installment i JOIN loan l ON l.id = i.loanId LEFT JOIN txn t ON t.id = i.paidTxnId WHERE i.loanId = :loanId ORDER BY i.n")
     fun installments(loanId: Long): Flow<List<InstallmentRow>>
-    @Query("SELECT i.*, NULL AS paidAt, l.title AS loanTitle FROM installment i JOIN loan l ON l.id = i.loanId WHERE i.paidTxnId IS NULL ORDER BY i.dueAt LIMIT 1")
+    @Query("SELECT i.*, NULL AS txnPaidAt, l.title AS loanTitle FROM installment i JOIN loan l ON l.id = i.loanId WHERE i.paidTxnId IS NULL AND i.paidAt IS NULL ORDER BY i.dueAt LIMIT 1")
     fun nextInstallment(): Flow<InstallmentRow?>
-    @Query("SELECT i.*, NULL AS paidAt, l.title AS loanTitle FROM installment i JOIN loan l ON l.id = i.loanId WHERE i.paidTxnId IS NULL AND i.dueAt < :until ORDER BY i.dueAt")
+    @Query("SELECT i.*, NULL AS txnPaidAt, l.title AS loanTitle FROM installment i JOIN loan l ON l.id = i.loanId WHERE i.paidTxnId IS NULL AND i.paidAt IS NULL AND i.dueAt < :until ORDER BY i.dueAt")
     suspend fun installmentsDueBefore(until: Long): List<InstallmentRow>
     @Insert suspend fun insertLoan(l: Loan): Long
     @Upsert suspend fun upsertLoan(l: Loan)
     @Delete suspend fun deleteLoan(l: Loan)
     @Insert suspend fun insertInstallments(i: List<Installment>)
-    @Query("DELETE FROM installment WHERE loanId = :loanId AND paidTxnId IS NULL") suspend fun deleteUnpaidInstallments(loanId: Long)
+    @Query("DELETE FROM installment WHERE loanId = :loanId AND paidTxnId IS NULL AND paidAt IS NULL") suspend fun deleteUnpaidInstallments(loanId: Long)
+    @Query("SELECT * FROM installment WHERE loanId = :loanId ORDER BY n") suspend fun loanInstallments(loanId: Long): List<Installment>
+    @Query("SELECT * FROM installment WHERE id = :id") suspend fun installment(id: Long): Installment?
     @Query("UPDATE installment SET paidTxnId = :txnId WHERE id = :id") suspend fun setInstallmentPaid(id: Long, txnId: Long)
+    @Query("UPDATE installment SET paidAt = NULL WHERE id = :id AND paidTxnId IS NULL") suspend fun unmarkInstallmentPaid(id: Long)
     @Query("SELECT id FROM category WHERE kind = 'EXPENSE' AND icon = 'bank' ORDER BY id LIMIT 1") suspend fun loanCategory(): Long?
 
     @Transaction
     suspend fun saveLoan(l: Loan, schedule: List<Installment>, receivedInto: Long?): Long {
         val id = if (l.id == 0L) insertLoan(l) else l.id.also { upsertLoan(l); deleteUnpaidInstallments(it) }
-        val paidNs = if (l.id == 0L) emptySet() else allInstallments().filter { it.loanId == id }.map { it.n }.toSet()
+        val paidNs = if (l.id == 0L) emptySet() else allInstallments().filter { it.loanId == id && (it.paidTxnId != null || it.paidAt != null) }.map { it.n }.toSet()
         insertInstallments(schedule.filter { it.n !in paidNs }.map { it.copy(loanId = id) })
         if (receivedInto != null) insertTxn(Txn(type = TxType.DEBT, amount = l.principal, accountId = receivedInto, title = "دریافت وام · ${l.title}", occurredAt = System.currentTimeMillis()))
         return id
     }
 
     @Transaction
-    suspend fun payInstallment(i: Installment, accountId: Long, at: Long, title: String): Long {
+    suspend fun payInstallment(installmentId: Long, accountId: Long, at: Long, title: String): Long? {
+        val i = installment(installmentId) ?: return null
+        i.paidTxnId?.let { return it }
+        if (account(accountId)?.archived != false) return null
         val id = insertTxn(Txn(type = TxType.EXPENSE, amount = i.amount, accountId = accountId, categoryId = loanCategory(), title = title, occurredAt = at))
         setInstallmentPaid(i.id, id)
         return id
@@ -658,6 +716,72 @@ interface JDao {
         if (accountId != null && meIsTo) insertTxn(Txn(type = TxType.DEBT, amount = amount, accountId = accountId, title = title, occurredAt = at))
     }
 
+    // ---- savings commitments ----
+    @Query("SELECT * FROM savings_commitment WHERE accountId = :accountId ORDER BY createdAt DESC, id DESC")
+    fun savingsCommitments(accountId: Long): Flow<List<SavingsCommitment>>
+
+    @Query("SELECT * FROM savings_commitment WHERE accountId = :accountId AND paidAmount < amount ORDER BY createdAt ASC, id ASC")
+    suspend fun openSavingsCommitments(accountId: Long): List<SavingsCommitment>
+
+    @Query("SELECT COALESCE(SUM(amount - paidAmount), 0) FROM savings_commitment WHERE accountId = :accountId")
+    fun returnableBalance(accountId: Long): Flow<Long>
+
+    @Query("SELECT * FROM savings_commitment WHERE id = :id")
+    suspend fun savingsCommitment(id: Long): SavingsCommitment?
+
+    @Insert suspend fun insertSavingsCommitment(c: SavingsCommitment): Long
+    @Upsert suspend fun upsertSavingsCommitment(c: SavingsCommitment)
+    @Delete suspend fun deleteSavingsCommitment(c: SavingsCommitment)
+    @Query("DELETE FROM savings_commitment WHERE id = :id") suspend fun deleteSavingsCommitment(id: Long)
+
+    @Query("SELECT * FROM savings_payment WHERE commitmentId = :commitmentId ORDER BY at DESC")
+    fun savingsPayments(commitmentId: Long): Flow<List<SavingsPayment>>
+
+    @Insert suspend fun insertSavingsPayment(p: SavingsPayment): Long
+    @Delete suspend fun deleteSavingsPayment(p: SavingsPayment)
+
+    @Query("SELECT * FROM savings_commitment") suspend fun allSavingsCommitments(): List<SavingsCommitment>
+    @Query("SELECT * FROM savings_payment") suspend fun allSavingsPayments(): List<SavingsPayment>
+    @Query("DELETE FROM savings_commitment") suspend fun clearSavingsCommitments()
+    @Query("DELETE FROM savings_payment") suspend fun clearSavingsPayments()
+    @Insert suspend fun insertSavingsCommitments(c: List<SavingsCommitment>)
+    @Insert suspend fun insertSavingsPayments(p: List<SavingsPayment>)
+
+    @Transaction
+    suspend fun returnSavings(commitmentId: Long?, savingsAccountId: Long, sourceAccountId: Long, returnRial: Long, note: String? = null): Long {
+        val now = System.currentTimeMillis()
+        val txnId = insertTxn(
+            Txn(
+                type = TxType.TRANSFER,
+                amount = returnRial,
+                accountId = sourceAccountId,
+                toAccountId = savingsAccountId,
+                title = note?.ifBlank { null } ?: "بازگرداندن به پس‌انداز",
+                occurredAt = now,
+                source = "MANUAL",
+            )
+        )
+        if (commitmentId != null && commitmentId != 0L) {
+            savingsCommitment(commitmentId)?.let { c ->
+                val newPaid = c.paidAmount + returnRial
+                upsertSavingsCommitment(c.copy(paidAmount = newPaid))
+                insertSavingsPayment(SavingsPayment(commitmentId = c.id, amount = returnRial, at = now, txnId = txnId))
+            }
+        } else {
+            var rem = returnRial
+            val opens = openSavingsCommitments(savingsAccountId)
+            for (c in opens) {
+                if (rem <= 0L) break
+                val needed = c.amount - c.paidAmount
+                val pay = minOf(rem, needed)
+                upsertSavingsCommitment(c.copy(paidAmount = c.paidAmount + pay))
+                insertSavingsPayment(SavingsPayment(commitmentId = c.id, amount = pay, at = now, txnId = txnId))
+                rem -= pay
+            }
+        }
+        return txnId
+    }
+
     // backup
     @Query("SELECT * FROM account") suspend fun allAccounts(): List<Account>
     @Query("SELECT * FROM card") suspend fun allCards(): List<Card>
@@ -708,12 +832,13 @@ interface JDao {
         p4: Phase4 = Phase4(),
     ) {
         clearLoans(); clearDebts() // cascades to installments and payments
-        clearGroups(); clearGoals(); clearPersons() // cascades to members, expenses, shares, entries
+        clearGroups(); clearGoals(); clearPersons(); clearSavingsCommitments() // cascades to members, expenses, shares, entries, payments
         clearRaw(); clearRules(); clearTxns(); clearCards(); clearAccounts(); clearCategories()
         insertCategories(categories); insertAccounts(accounts); insertCards(cards); insertTxns(txns); insertRules(rules)
         insertPersons(p4.persons); insertGoals(p4.goals); insertGoalEntries(p4.goalEntries)
         insertLoans(loans); insertInstallments(installments); insertDebts(debts); insertPayments(payments)
         insertGroups(p4.groups); insertMembers(p4.members); insertSplitExpenses(p4.expenses); insertShares(p4.shares)
+        insertSavingsCommitments(p4.savingsCommitments); insertSavingsPayments(p4.savingsPayments)
     }
 }
 
@@ -722,8 +847,9 @@ interface JDao {
         Account::class, Card::class, Category::class, Txn::class, RawMessage::class, Rule::class,
         Loan::class, Installment::class, Debt::class, DebtPayment::class,
         Person::class, Goal::class, GoalEntry::class, SplitGroup::class, SplitMember::class, SplitExpense::class, SplitShare::class,
+        SavingsCommitment::class, SavingsPayment::class,
     ],
-    version = 5, exportSchema = true,
+    version = 8, exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3, spec = AppDb.V3::class), AutoMigration(from = 3, to = 4, spec = AppDb.V4::class),
         AutoMigration(from = 4, to = 5),
@@ -748,10 +874,55 @@ abstract class AppDb : RoomDatabase() {
     }
 
     companion object {
+        private val migration5To6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Alter in place so the installment foreign key never sees its parent table dropped.
+                db.execSQL("ALTER TABLE loan ADD COLUMN receiveAccountId INTEGER REFERENCES account(id) ON DELETE SET NULL")
+                db.execSQL("CREATE INDEX index_loan_receiveAccountId ON loan(receiveAccountId)")
+            }
+        }
+
+        private val migration6To7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE installment ADD COLUMN paidAt INTEGER")
+            }
+        }
+
+        private val migration7To8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE account ADD COLUMN isSavings INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `savings_commitment` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `accountId` INTEGER NOT NULL,
+                    `txnId` INTEGER,
+                    `amount` INTEGER NOT NULL,
+                    `paidAmount` INTEGER NOT NULL DEFAULT 0,
+                    `note` TEXT,
+                    `createdAt` INTEGER NOT NULL,
+                    FOREIGN KEY(`accountId`) REFERENCES `account`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`txnId`) REFERENCES `txn`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_savings_commitment_accountId` ON `savings_commitment` (`accountId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_savings_commitment_txnId` ON `savings_commitment` (`txnId`)")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `savings_payment` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `commitmentId` INTEGER NOT NULL,
+                    `amount` INTEGER NOT NULL,
+                    `at` INTEGER NOT NULL,
+                    `txnId` INTEGER,
+                    FOREIGN KEY(`commitmentId`) REFERENCES `savings_commitment`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`txnId`) REFERENCES `txn`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+                )""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_savings_payment_commitmentId` ON `savings_payment` (`commitmentId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_savings_payment_txnId` ON `savings_payment` (`txnId`)")
+            }
+        }
+
         fun build(ctx: Context, key: ByteArray): AppDb {
             System.loadLibrary("sqlcipher")
             return Room.databaseBuilder(ctx, AppDb::class.java, "jibeman.db")
                 .openHelperFactory(SupportOpenHelperFactory(key))
+                .addMigrations(migration5To6, migration6To7, migration7To8)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) = seed(db)
                 })
@@ -792,4 +963,6 @@ data class Phase4(
     val members: List<SplitMember> = emptyList(),
     val expenses: List<SplitExpense> = emptyList(),
     val shares: List<SplitShare> = emptyList(),
+    val savingsCommitments: List<SavingsCommitment> = emptyList(),
+    val savingsPayments: List<SavingsPayment> = emptyList(),
 )

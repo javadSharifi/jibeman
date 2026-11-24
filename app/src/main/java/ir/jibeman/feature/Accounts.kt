@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,7 @@ import ir.jibeman.core.Jalali
 import ir.jibeman.core.Money
 import ir.jibeman.core.db.AccType
 import ir.jibeman.core.db.Account
+import ir.jibeman.core.db.SavingsCommitment
 import ir.jibeman.core.db.Totals
 import ir.jibeman.core.db.TxType
 import ir.jibeman.core.db.Txn
@@ -74,6 +76,7 @@ import ir.jibeman.ui.C
 import ir.jibeman.ui.CircleBtn
 import ir.jibeman.ui.Confirm
 import ir.jibeman.ui.Empty
+import ir.jibeman.ui.AmountField
 import ir.jibeman.ui.Field
 import ir.jibeman.ui.GhostButton
 import ir.jibeman.ui.Ic
@@ -120,6 +123,7 @@ fun AccountsScreen(go: (Route) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (AddReq) -> Unit) {
     val app = app()
@@ -132,24 +136,41 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
     val month = remember { Jalali.monthRange(now.y, now.m) }
     val totals by remember { dao.totals(month.first, month.second, id) }.collectAsStateWithLifecycle(Totals(0, 0, 0))
     val recent by remember { dao.recent(id, 5) }.collectAsStateWithLifecycle(emptyList())
+    val returnable by remember(id) { dao.returnableBalance(id) }.collectAsStateWithLifecycle(0L)
+    val commitments by remember(id) { dao.savingsCommitments(id) }.collectAsStateWithLifecycle(emptyList())
     var adjust by remember { mutableStateOf(false) }
     var editCardSheet by remember { mutableStateOf(false) }
+    var revealDetails by remember { mutableStateOf(false) }
+    var showReturnSheet by remember { mutableStateOf(false) }
+    var targetCommitment by remember { mutableStateOf<SavingsCommitment?>(null) }
 
     val ctx = LocalContext.current
     if (accounts != null && ab == null) { LaunchedEffect(Unit) { back() }; return } // deleted
     if (ab == null) return
     val a = ab.account
+    val privateDetails = listOf(a.cardNumber, a.accountNo, a.iban, a.cardExpiry, a.cardCvv2).any { !it.isNullOrBlank() }
+    fun openCardDetails(action: () -> Unit) {
+        if (privateDetails && !(app.prefs.lockEnabled && app.prefs.hasPin)) {
+            Toast.makeText(ctx, "ابتدا رمز برنامه را در تنظیمات امنیت فعال کن.", Toast.LENGTH_SHORT).show()
+        } else action()
+    }
 
     LazyColumn(Modifier.fillMaxSize().background(C.bg), contentPadding = PaddingValues(bottom = 40.dp)) {
         item {
             Column(Modifier.heroBg().padding(bottom = 4.dp)) {
-                TopBar(a.name, back, dark = false, action = Ic.pen) { go(Route.EditAccount(id)) }
+                TopBar(a.name, back, dark = false, action = Ic.pen) { openCardDetails { go(Route.EditAccount(id)) } }
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                     RealisticBankCard(
                         a,
                         interactive = true,
-                        onEdit = if (a.type == AccType.BANK) {{ editCardSheet = true }} else null,
+                        onEdit = if (a.type == AccType.BANK) {{ openCardDetails { editCardSheet = true } }} else null,
+                        revealDetails = revealDetails,
                     )
+                    if (privateDetails) {
+                        GhostButton(if (revealDetails) "پوشاندن مشخصات کارت" else "نمایش مشخصات کارت", Modifier.fillMaxWidth()) {
+                            openCardDetails { revealDetails = !revealDetails }
+                        }
+                    }
                 }
                 Row(
                     Modifier.padding(horizontal = 20.dp, vertical = 6.dp).fillMaxWidth(),
@@ -167,7 +188,7 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
                         if (a.type == AccType.BANK) {
                             Row(
                                 Modifier.clip(RoundedCornerShape(12.dp)).background(C.surface).border(1.dp, C.line, RoundedCornerShape(12.dp))
-                                    .clickable { editCardSheet = true }.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    .clickable { openCardDetails { editCardSheet = true } }.padding(horizontal = 12.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
@@ -175,7 +196,7 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
                                 T("ویرایش کارت", 11.5f, 600, C.accent)
                             }
                         }
-                        if (!a.cardNumber.isNullOrBlank() || !a.iban.isNullOrBlank()) {
+                        if (revealDetails && (!a.cardNumber.isNullOrBlank() || !a.iban.isNullOrBlank())) {
                             Row(
                                 Modifier.clip(RoundedCornerShape(12.dp)).background(C.surface).border(1.dp, C.line, RoundedCornerShape(12.dp))
                                     .clickable {
@@ -209,7 +230,78 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
                 ActionCircle("گردش حساب", Ic.list) { go(Route.Txns(id)) }
                 ActionCircle("تعدیل موجودی", Ic.scale) { adjust = true }
                 ActionCircle(if (a.type == AccType.BANK) "ویرایش کارت" else "ویرایش", Ic.pen) {
-                    if (a.type == AccType.BANK) editCardSheet = true else go(Route.EditAccount(id))
+                    openCardDetails { if (a.type == AccType.BANK) editCardSheet = true else go(Route.EditAccount(id)) }
+                }
+            }
+
+            if (a.isSavings) {
+                Column(
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp)).background(C.surface).border(1.dp, C.line, RoundedCornerShape(20.dp))
+                        .padding(14.dp),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column {
+                            T("مانده قابل بازگشت (طلب از خود)", 12, color = C.t2)
+                            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 4.dp)) {
+                                T(amount(returnable, hide), 20, 800, color = if (returnable > 0L) C.accent else C.ink)
+                                T("تومان", 11, color = C.muted, modifier = Modifier.padding(bottom = 3.dp))
+                            }
+                        }
+                        if (returnable > 0L) {
+                            Row(
+                                Modifier.clip(RoundedCornerShape(12.dp)).background(C.lime)
+                                    .clickable { targetCommitment = null; showReturnSheet = true }.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Ico(Ic.swap, 15.dp, C.onLime)
+                                T("بازگرداندن", 12, 800, C.onLime)
+                            }
+                        }
+                    }
+
+                    if (commitments.isNotEmpty()) {
+                        T("مبالغ برداشتی و تعهدات بازگشت", 12, 700, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+                        commitments.forEach { c ->
+                            val rem = maxOf(0L, c.amount - c.paidAmount)
+                            Column(
+                                Modifier.padding(vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                                    .background(C.bg).border(1.dp, C.line.copy(alpha = 0.6f), RoundedCornerShape(14.dp)).padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                    T(c.note?.ifBlank { null } ?: "برداشت از پس‌انداز", 12.5f, 700)
+                                    T(Jalali.dayLabel(c.createdAt), 10.5f, color = C.t2)
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                    T("برداشت: ${amount(c.amount, hide)} تومان", 11, color = C.t2)
+                                    if (c.paidAmount > 0L) T("بازپرداخت: ${amount(c.paidAmount, hide)}", 11, color = C.sky)
+                                    T(
+                                        if (rem == 0L) "تسویه شده" else "مانده: ${amount(rem, hide)} تومان",
+                                        11.5f, 700,
+                                        color = if (rem == 0L) C.ok else C.bad,
+                                    )
+                                }
+                                if (rem > 0L) {
+                                    Row(
+                                        Modifier.align(Alignment.End).padding(top = 4.dp)
+                                            .clip(RoundedCornerShape(8.dp)).background(C.lime.copy(alpha = 0.15f))
+                                            .clickable { targetCommitment = c; showReturnSheet = true }.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Ico(Ic.swap, 12.dp, C.accent)
+                                        T("بازگرداندن این مبلغ", 10.5f, 700, C.accent)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -247,12 +339,71 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
             dao.upsertTxn(Txn(type = TxType.ADJUST, amount = diff, accountId = id, title = "تعدیل موجودی", occurredAt = System.currentTimeMillis()))
         }
     }
+
+    if (showReturnSheet) {
+        val otherAccounts = (accounts ?: emptyList()).filter { it.account.id != id }
+        var sourceAccId by remember { mutableLongStateOf(otherAccounts.firstOrNull()?.account?.id ?: 0L) }
+        val maxAmount = targetCommitment?.let { maxOf(0L, it.amount - it.paidAmount) } ?: returnable
+        var amountText by remember { mutableStateOf(if (maxAmount > 0L) Money.tomanInput(maxAmount) else "") }
+
+        ModalBottomSheet(
+            onDismissRequest = { showReturnSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = C.sheet,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        ) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).navigationBarsPadding()) {
+                    T("بازگرداندن به پس‌انداز", 16, 800, modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
+                    T("واریز به ${a.name}", 12, color = C.t2, modifier = Modifier.fillMaxWidth().padding(top = 2.dp), align = TextAlign.Center)
+
+                    if (targetCommitment != null) {
+                        T(
+                            "بابت تعهد: ${targetCommitment?.note ?: "برداشت از پس‌انداز"} (مانده: ${amount(maxAmount, hide)} تومان)",
+                            11.5f,
+                            color = C.accent,
+                            modifier = Modifier.padding(top = 10.dp),
+                        )
+                    }
+
+                    T("پرداخت از حساب (مبدأ)", 12, color = C.muted, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+                    AccountPicker(otherAccounts, sourceAccId, "از", Modifier.fillMaxWidth()) { sourceAccId = it }
+
+                    T("مبلغ بازگرداندن (تومان)", 12, color = C.muted, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+                    AmountField(amountText, { amountText = it }, "۰", allowNegative = false)
+
+                    Row(Modifier.padding(top = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GhostButton("انصراف", Modifier.weight(1f)) { showReturnSheet = false }
+                        LimeButton("ثبت بازگرداندن", Modifier.weight(1f), Ic.check) {
+                            val rial = Money.parseToman(amountText) ?: 0L
+                            when {
+                                rial <= 0L -> Toast.makeText(ctx, "مبلغ را وارد کن", Toast.LENGTH_SHORT).show()
+                                sourceAccId == 0L -> Toast.makeText(ctx, "حساب مبدأ را انتخاب کن", Toast.LENGTH_SHORT).show()
+                                maxAmount > 0L && rial > maxAmount -> Toast.makeText(ctx, "مبلغ بیشتر از مانده تعهد است", Toast.LENGTH_SHORT).show()
+                                else -> {
+                                    scope.launch {
+                                        dao.returnSavings(
+                                            commitmentId = targetCommitment?.id,
+                                            savingsAccountId = id,
+                                            sourceAccountId = sourceAccId,
+                                            returnRial = rial,
+                                        )
+                                        showReturnSheet = false
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
 private fun AdjustDialog(current: Long, onDismiss: () -> Unit, onOk: (Long) -> Unit) {
     var text by remember { mutableStateOf("") }
-    val parsed = Money.parseToman(text)
+    val parsed = Money.parseToman(text, allowNegative = true)
     AlertDialog(
         onDismissRequest = onDismiss, containerColor = C.sheet,
         title = { T("تعدیل موجودی", 17, 800) },
@@ -260,8 +411,7 @@ private fun AdjustDialog(current: Long, onDismiss: () -> Unit, onOk: (Long) -> U
             Column {
                 T("موجودی واقعی حساب را از اپ یا پیامک بانک وارد کن. اختلاف به‌صورت یک تراکنش «تعدیل» ثبت می‌شود.", 12.5f, color = C.t2)
                 T("موجودی فعلی در برنامه: ${Money.toman(current)} تومان", 12, color = C.muted, modifier = Modifier.padding(top = 10.dp, bottom = 10.dp))
-                Field(text, { text = it }, "موجودی واقعی (تومان)", number = true)
-                if (parsed != null) T(Money.words(parsed / 10) + " تومان", 11, color = C.muted, modifier = Modifier.padding(top = 6.dp))
+                AmountField(text, { text = it }, "موجودی واقعی (تومان)", allowNegative = true)
             }
         },
         confirmButton = { TextButton({ if (parsed != null) { onOk(parsed); onDismiss() } }) { T("ثبت", 14, 800, if (parsed != null) C.accent else C.muted) } },
@@ -284,7 +434,9 @@ fun EditCardBottomSheet(
     var name by remember(account.id) { mutableStateOf(account.name) }
     var bank by remember(account.id) { mutableStateOf(account.bankCode) }
     var cardNumber by remember(account.id) { mutableStateOf(account.cardNumber?.let { BankKit.formatCardNumber(it) }.orEmpty()) }
-    var cardExpiry by remember(account.id) { mutableStateOf(account.cardExpiry?.let { BankKit.formatExpiry(it) }.orEmpty()) }
+    val parsedExp = remember(account.id) { BankKit.parseExpiry(account.cardExpiry) }
+    var expMonth by remember(account.id) { mutableStateOf(parsedExp.first) }
+    var expYear by remember(account.id) { mutableStateOf(parsedExp.second) }
     var cardCvv2 by remember(account.id) { mutableStateOf(account.cardCvv2.orEmpty()) }
     var iban by remember(account.id) { mutableStateOf(account.iban?.let { BankKit.formatIban(it) }.orEmpty()) }
     var cardColor by remember(account.id) { mutableStateOf(account.cardColor) }
@@ -293,15 +445,20 @@ fun EditCardBottomSheet(
 
     fun save() {
         val cleanPan = BankKit.cleanDigits(cardNumber)
-        val cleanExpiry = BankKit.cleanDigits(cardExpiry)
+        val cleanMonth = BankKit.cleanDigits(expMonth)
+        val cleanYear = BankKit.cleanDigits(expYear)
         val cleanCvv = BankKit.cleanDigits(cardCvv2)
         val cleanIban = BankKit.cleanDigits(iban)
 
         when {
             cleanPan.isNotEmpty() && cleanPan.length != 16 -> return toast("شماره کارت باید ۱۶ رقم باشد")
-            cardExpiry.isNotBlank() && !BankKit.isExpiryValid(cardExpiry) -> return toast("فرمت تاریخ انقضا نامعتبر است (ماه بین ۰۱ تا ۱۲)")
+            cleanMonth.isNotBlank() && !BankKit.isMonthValid(cleanMonth) -> return toast("ماه انقضا نامعتبر است (باید بین ۰۱ تا ۱۲ باشد)")
+            cleanYear.isNotBlank() && !BankKit.isYearValid(cleanYear) -> return toast("سال انقضا باید ۲ یا ۴ رقم باشد")
+            (cleanMonth.isNotBlank() && cleanYear.isBlank()) || (cleanMonth.isBlank() && cleanYear.isNotBlank()) ->
+                return toast("لطفاً ماه و سال انقضا را کامل وارد کنید")
         }
 
+        val finalExpiry = BankKit.buildExpiry(cleanMonth, cleanYear).ifBlank { null }
         val detectedBank = if (cleanPan.isNotEmpty()) BankKit.detectByCard(cleanPan)?.code ?: bank else bank
         val finalName = name.trim().ifBlank {
             Banks.of(detectedBank)?.let { if (it.code == "blu") "بلوبانک" else "بانک ${it.name}" } ?: account.name
@@ -311,7 +468,7 @@ fun EditCardBottomSheet(
             name = finalName,
             bankCode = detectedBank,
             cardNumber = cleanPan.ifBlank { null },
-            cardExpiry = cleanExpiry.ifBlank { null },
+            cardExpiry = finalExpiry,
             cardCvv2 = cleanCvv.ifBlank { null },
             iban = cleanIban.ifBlank { null },
             cardColor = cardColor,
@@ -370,13 +527,14 @@ fun EditCardBottomSheet(
                         bankCode = bank,
                         accountNo = account.accountNo,
                         cardNumber = cardNumber.ifBlank { null },
-                        cardExpiry = cardExpiry.ifBlank { null },
+                        cardExpiry = BankKit.buildExpiry(expMonth, expYear).ifBlank { null },
                         cardCvv2 = cardCvv2.ifBlank { null },
                         iban = iban.ifBlank { null },
                         cardColor = cardColor,
                         style = account.style,
                     ),
                     interactive = false,
+                    revealDetails = true,
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
 
@@ -413,24 +571,32 @@ fun EditCardBottomSheet(
                 }
 
                 // Expiry and CVV2
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
-                        Label("تاریخ انقضا (ماه / سال)")
+                        Label("ماه انقضا")
                         Field(
-                            cardExpiry,
+                            expMonth,
                             { input ->
-                                val digits = BankKit.cleanDigits(input).take(4)
-                                cardExpiry = BankKit.formatExpiry(digits)
+                                expMonth = BankKit.cleanDigits(input).take(2)
                             },
-                            "مثلاً ۰۸ / ۰۵",
+                            "۰۱ تا ۱۲",
                             number = true,
                             ltr = true,
                         )
-                        if (cardExpiry.isNotBlank() && !BankKit.isExpiryValid(cardExpiry)) {
-                            T("ماه باید بین ۰۱ تا ۱۲ باشد", 10.5f, color = C.bad, modifier = Modifier.padding(top = 2.dp))
-                        }
                     }
-                    Column(Modifier.weight(1f)) {
+                    Column(Modifier.weight(1.3f)) {
+                        Label("سال انقضا")
+                        Field(
+                            expYear,
+                            { input ->
+                                expYear = BankKit.cleanDigits(input).take(4)
+                            },
+                            "مثلاً ۱۴۰۶ یا ۰۶",
+                            number = true,
+                            ltr = true,
+                        )
+                    }
+                    Column(Modifier.weight(1.1f)) {
                         Label("کد CVV2")
                         Field(
                             cardCvv2,
@@ -440,6 +606,9 @@ fun EditCardBottomSheet(
                             ltr = true,
                         )
                     }
+                }
+                if (expMonth.isNotBlank() && !BankKit.isMonthValid(expMonth)) {
+                    T("ماه انقضا نامعتبر است (باید بین ۰۱ تا ۱۲ باشد)", 10.5f, color = C.bad, modifier = Modifier.padding(top = 3.dp))
                 }
 
                 // IBAN
@@ -457,6 +626,7 @@ fun EditCardBottomSheet(
                         }
                     },
                     "IR •• •••• •••• •••• •••• •••• ••",
+                    number = true,
                     ltr = true,
                 )
 
@@ -518,21 +688,26 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
     val cards = remember { mutableStateListOf<String>() }
     var newCard by remember { mutableStateOf("") }
     var cardNumber by remember { mutableStateOf("") }
-    var cardExpiry by remember { mutableStateOf("") }
+    var expMonth by remember { mutableStateOf("") }
+    var expYear by remember { mutableStateOf("") }
     var cardCvv2 by remember { mutableStateOf("") }
     var iban by remember { mutableStateOf("") }
     var cardColor by remember { mutableStateOf<Long?>(null) }
+    var isSavings by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(id) {
         if (id != 0L) dao.account(id)?.let { a ->
             original = a; name = a.name; type = a.type; bank = a.bankCode; accountNo = a.accountNo.orEmpty()
-            initial = if (a.initialBalance == 0L) "" else (a.initialBalance / 10).toString(); style = a.style
+            initial = if (a.initialBalance == 0L) "" else Money.tomanInput(a.initialBalance); style = a.style
             cardNumber = a.cardNumber?.let { BankKit.formatCardNumber(it) }.orEmpty()
-            cardExpiry = a.cardExpiry?.let { BankKit.formatExpiry(it) }.orEmpty()
+            val parsedExp = BankKit.parseExpiry(a.cardExpiry)
+            expMonth = parsedExp.first
+            expYear = parsedExp.second
             cardCvv2 = a.cardCvv2.orEmpty()
             iban = a.iban?.let { BankKit.formatIban(it) }.orEmpty()
             cardColor = a.cardColor
+            isSavings = a.isSavings
             cards.clear(); cards.addAll(dao.cards(id).map { it.last4 })
         }
         loaded = true
@@ -542,10 +717,11 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
     fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
     fun save() {
         val finalName = name.trim().ifBlank { if (type == AccType.BANK) Banks.of(bank)?.let { if (it.code == "blu") "بلوبانک" else "بانک ${it.name}" }.orEmpty() else if (type == AccType.CASH) "نقد" else "" }
-        val init = if (initial.isBlank()) 0L else Money.parseToman(initial)
+        val init = if (initial.isBlank()) 0L else Money.parseToman(initial, allowNegative = true)
         val pending = Money.ascii(newCard).trim()
         val cleanPan = BankKit.cleanDigits(cardNumber)
-        val cleanExpiry = BankKit.cleanDigits(cardExpiry)
+        val cleanMonth = BankKit.cleanDigits(expMonth)
+        val cleanYear = BankKit.cleanDigits(expYear)
         val cleanCvv = BankKit.cleanDigits(cardCvv2)
         val cleanIban = BankKit.cleanDigits(iban)
 
@@ -555,17 +731,23 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
             type == AccType.BANK && cleanPan.isNotEmpty() && cleanPan.length != 16 -> return toast("شماره کارت باید ۱۶ رقم باشد")
             init == null -> return toast("موجودی اولیه فقط عدد باشد")
             pending.isNotEmpty() && (pending.length != 4 || !pending.all(Char::isDigit)) -> return toast("شماره کارت: دقیقاً ۴ رقم آخر")
+            type == AccType.BANK && cleanMonth.isNotBlank() && !BankKit.isMonthValid(cleanMonth) -> return toast("ماه انقضا نامعتبر است (باید بین ۰۱ تا ۱۲ باشد)")
+            type == AccType.BANK && cleanYear.isNotBlank() && !BankKit.isYearValid(cleanYear) -> return toast("سال انقضا باید ۲ یا ۴ رقم باشد")
+            type == AccType.BANK && ((cleanMonth.isNotBlank() && cleanYear.isBlank()) || (cleanMonth.isBlank() && cleanYear.isNotBlank())) ->
+                return toast("لطفاً ماه و سال انقضا را کامل وارد کنید")
         }
         if (pending.length == 4 && pending !in cards) cards += pending
+        val finalExpiry = BankKit.buildExpiry(cleanMonth, cleanYear).ifBlank { null }
         val a = (original ?: Account(name = "", type = type)).copy(
             name = finalName, type = type, bankCode = if (type == AccType.BANK) bank else null,
             accountNo = Money.ascii(accountNo).trim().ifBlank { null }.takeIf { type == AccType.BANK },
             initialBalance = init ?: 0, style = style,
             cardNumber = cleanPan.ifBlank { null }.takeIf { type == AccType.BANK },
-            cardExpiry = cleanExpiry.ifBlank { null }.takeIf { type == AccType.BANK },
+            cardExpiry = finalExpiry.takeIf { type == AccType.BANK },
             cardCvv2 = cleanCvv.ifBlank { null }.takeIf { type == AccType.BANK },
             iban = cleanIban.ifBlank { null }.takeIf { type == AccType.BANK },
             cardColor = cardColor.takeIf { type == AccType.BANK },
+            isSavings = isSavings,
         )
         scope.launch {
             dao.saveAccount(a, if (type == AccType.BANK) cards.toList() else emptyList())
@@ -584,13 +766,14 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
                     bankCode = bank,
                     accountNo = accountNo.ifBlank { null },
                     cardNumber = cardNumber.ifBlank { null },
-                    cardExpiry = cardExpiry.ifBlank { null },
+                    cardExpiry = BankKit.buildExpiry(expMonth, expYear).ifBlank { null },
                     cardCvv2 = cardCvv2.ifBlank { null },
                     iban = iban.ifBlank { null },
                     cardColor = cardColor,
                     style = style,
                 ),
                 interactive = false,
+                revealDetails = true,
                 modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
             )
             Label("نوع حساب")
@@ -634,25 +817,33 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
                 }
 
                 // Expiry Date and CVV2
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
-                        Label("تاریخ انقضا (اختیاری)")
+                        Label("ماه انقضا")
                         Field(
-                            cardExpiry,
+                            expMonth,
                             { input ->
-                                val digits = BankKit.cleanDigits(input).take(4)
-                                cardExpiry = BankKit.formatExpiry(digits)
+                                expMonth = BankKit.cleanDigits(input).take(2)
                             },
-                            "ماه / سال (مثلاً ۰۸ / ۰۵)",
+                            "۰۱ تا ۱۲",
                             number = true,
                             ltr = true,
                         )
-                        if (cardExpiry.isNotBlank() && !BankKit.isExpiryValid(cardExpiry)) {
-                            T("ماه باید بین ۰۱ تا ۱۲ باشد", 10.5f, color = C.bad, modifier = Modifier.padding(top = 2.dp))
-                        }
                     }
-                    Column(Modifier.weight(1f)) {
-                        Label("کد CVV2 (اختیاری)")
+                    Column(Modifier.weight(1.3f)) {
+                        Label("سال انقضا")
+                        Field(
+                            expYear,
+                            { input ->
+                                expYear = BankKit.cleanDigits(input).take(4)
+                            },
+                            "مثلاً ۱۴۰۶ یا ۰۶",
+                            number = true,
+                            ltr = true,
+                        )
+                    }
+                    Column(Modifier.weight(1.1f)) {
+                        Label("کد CVV2")
                         Field(
                             cardCvv2,
                             { cardCvv2 = BankKit.cleanDigits(it).take(4) },
@@ -661,6 +852,9 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
                             ltr = true,
                         )
                     }
+                }
+                if (expMonth.isNotBlank() && !BankKit.isMonthValid(expMonth)) {
+                    T("ماه انقضا نامعتبر است (باید بین ۰۱ تا ۱۲ باشد)", 10.5f, color = C.bad, modifier = Modifier.padding(top = 3.dp))
                 }
 
                 // IBAN / Sheba
@@ -678,6 +872,7 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
                         }
                     },
                     "IR •• •••• •••• •••• •••• •••• ••",
+                    number = true,
                     ltr = true,
                 )
                 val cleanIban = BankKit.cleanDigits(iban)
@@ -727,8 +922,7 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
             Label("نام حساب")
             Field(name, { name = it }, if (type == AccType.BANK) "مثلاً حساب حقوق" else "مثلاً کیف پول")
             Label("موجودی فعلی (تومان)")
-            Field(initial, { initial = it }, "۰", number = true)
-            Money.parseToman(initial)?.let { if (it > 0) T(Money.words(it / 10) + " تومان", 11, color = C.muted, modifier = Modifier.padding(top = 6.dp)) }
+            AmountField(initial, { initial = it }, "۰", allowNegative = true)
             if (id != 0L) T("این عدد موجودیِ پیش از اولین تراکنش ثبت‌شده است. برای اصلاح موجودی فعلی از «تعدیل موجودی» استفاده کن.", 11, color = C.muted, modifier = Modifier.padding(top = 4.dp))
             if (type == AccType.BANK) {
                 Label("شماره حساب (اختیاری، برای تشخیص پیامک واریز)")
@@ -762,6 +956,28 @@ fun EditAccountScreen(id: Long, back: () -> Unit) {
                     )
                 }
             }
+
+            Row(
+                Modifier.padding(top = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                    .background(C.surface).border(1.dp, C.line, RoundedCornerShape(16.dp))
+                    .clickable { isSavings = !isSavings }.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    T("حساب پس‌انداز", 13.5f, 700)
+                    T("تفکیک از موجودی قابل‌خرج روزمره و رهگیری مبالغ برداشتی", 11, color = C.t2)
+                }
+                Box(
+                    Modifier.size(24.dp).clip(RoundedCornerShape(7.dp))
+                        .background(if (isSavings) C.lime else Color.Transparent)
+                        .border(1.5.dp, if (isSavings) C.lime else C.line, RoundedCornerShape(7.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isSavings) Ico(Ic.check, 16.dp, C.onLime)
+                }
+            }
+
             Spacer(Modifier.height(24.dp))
         }
         Row(Modifier.navigationBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

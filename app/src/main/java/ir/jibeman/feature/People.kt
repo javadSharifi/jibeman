@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ir.jibeman.app
@@ -101,7 +102,7 @@ fun PersonDialog(p: Person, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field(name, { name = it }, "نام", leading = Ic.user)
-                Field(phone, { phone = it }, "شماره موبایل (اختیاری)", number = true, ltr = true)
+                Field(phone, { phone = it }, "شماره موبایل (اختیاری)", number = true, ltr = true, keyboardType = KeyboardType.Phone)
                 Field(card, { card = it }, "شماره کارت (اختیاری)", number = true, ltr = true, leading = Ic.card)
                 Field(note, { note = it }, "توضیح (اختیاری)", leading = Ic.pen)
             }
@@ -140,12 +141,18 @@ fun PersonDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit) {
     val owed = debts.filter { it.debt.direction == DebtDir.OWED_TO_ME }.sumOf { it.remaining }
     val owe = debts.filter { it.debt.direction == DebtDir.I_OWE }.sumOf { it.remaining }
     LazyColumn(Modifier.fillMaxSize().glowBg(), contentPadding = PaddingValues(bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { TopBar(p.name, back, action = Ic.pen) { edit = true } }
+        item {
+            TopBar(p.name, back, action = Ic.pen) {
+                if (!p.cardNo.isNullOrBlank() && !(app.prefs.lockEnabled && app.prefs.hasPin)) {
+                    Toast.makeText(ctx, "ابتدا رمز برنامه را در تنظیمات امنیت فعال کن.", Toast.LENGTH_SHORT).show()
+                } else edit = true
+            }
+        }
         item {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Avatar(p.name, size = 64)
                 p.phone?.let { T("⁦${Money.fa(it)}⁩", 13, color = C.t2, modifier = Modifier.padding(top = 8.dp)) }
-                p.cardNo?.let { T("کارت ⁦${Money.fa(it)}⁩", 12, color = C.muted) }
+                p.cardNo?.let { T("کارت ⁦•••• •••• •••• ${Money.fa(it.takeLast(4))}⁩", 12, color = C.muted) }
                 p.note?.let { T(it, 12, color = C.muted) }
             }
         }
