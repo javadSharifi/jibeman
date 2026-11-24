@@ -22,6 +22,10 @@ const TABLES = new Set([
   'rules',
   'savingsCommitments',
   'savingsPayments',
+  'compareSessions',
+  'compareCriteria',
+  'compareItems',
+  'compareChecks',
 ]);
 
 const MAX_CHANGES = 200; // per request

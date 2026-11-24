@@ -627,12 +627,14 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
                 {/* Card Color Palette */}
                 <div>
                   <label className="text-[11px] text-muted block mb-1.5">رنگ سفارشی کارت</label>
-                  <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                  <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-3 px-1.5 -mx-1.5">
                     <button
                       type="button"
                       onClick={() => setCardColor(null)}
-                      className={`h-7 px-2.5 rounded-full text-[10px] font-bold border transition-all ${
-                        cardColor === null ? 'bg-lime text-onLime border-transparent' : 'bg-surface text-muted border-line'
+                      className={`h-8 px-3 rounded-full text-xs font-bold border shrink-0 whitespace-nowrap transition-all ${
+                        cardColor === null
+                          ? 'bg-lime text-onLime border-transparent shadow-sm'
+                          : 'bg-surface text-muted hover:text-white border-line'
                       }`}
                     >
                       رنگ پیش‌فرض بانک
@@ -643,12 +645,16 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
                         type="button"
                         onClick={() => setCardColor(p.color)}
                         title={p.name}
-                        className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center transition-transform ${
-                          cardColor === p.color ? 'ring-2 ring-lime scale-110' : 'opacity-80'
+                        className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center transition-all ${
+                          cardColor === p.color
+                            ? 'ring-2 ring-lime ring-offset-2 ring-offset-sheet'
+                            : 'opacity-70 hover:opacity-100 hover:scale-105'
                         }`}
                         style={{ backgroundColor: p.color }}
                       >
-                        {cardColor === p.color && <Check size={14} className="text-white" />}
+                        {cardColor === p.color && (
+                          <Check size={13} strokeWidth={3} className="text-white drop-shadow-sm" />
+                        )}
                       </button>
                     ))}
                   </div>

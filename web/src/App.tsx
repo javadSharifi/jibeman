@@ -19,6 +19,7 @@ import { Backup } from './pages/Backup';
 import { People } from './pages/People';
 import { Rules } from './pages/Rules';
 import { Security } from './pages/Security';
+import { ShoppingCompare } from './pages/ShoppingCompare';
 import { LockScreen } from './components/LockScreen';
 import { isLockEnabled, shouldLock, recordActivity } from './core/security';
 
@@ -104,6 +105,7 @@ export function App() {
     if (subRoute === 'people') return <People onBack={() => setSubRoute(null)} hidden={hidden} />;
     if (subRoute === 'rules') return <Rules onBack={() => setSubRoute(null)} />;
     if (subRoute === 'security') return <Security onBack={() => setSubRoute(null)} />;
+    if (subRoute === 'compare') return <ShoppingCompare onBack={() => setSubRoute(null)} hidden={hidden} />;
 
     switch (activeTab) {
       case 0:

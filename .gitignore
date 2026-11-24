@@ -10,3 +10,6 @@ web/dist/
 dist/
 .wrangler/
 .DS_Store
+*.keystore
+*.jks
+

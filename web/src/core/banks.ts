@@ -34,6 +34,9 @@ export const Banks: Bank[] = [
   { code: 'gardeshgari', name: 'گردشگری', color: '#3E2723', gradientEnd: '#1F1210', cardPrefixes: ['505416'], ibanCodes: ['064'], letter: 'گ' },
   { code: 'iranzamin', name: 'ایران زمین', color: '#512DA8', gradientEnd: '#281358', cardPrefixes: ['505785'], ibanCodes: ['069'], letter: 'ا' },
   { code: 'tosetaavon', name: 'توسعه تعاون', color: '#00695C', gradientEnd: '#003831', cardPrefixes: ['502908'], ibanCodes: ['022'], letter: 'ت' },
+  { code: 'tosesaderat', name: 'توسعه صادرات', color: '#0D47A1', gradientEnd: '#05214E', cardPrefixes: ['627648', '207177'], ibanCodes: ['020'], letter: 'ت' },
+  { code: 'sanatmadan', name: 'صنعت و معدن', color: '#8D6E63', gradientEnd: '#48352F', cardPrefixes: ['627961'], ibanCodes: ['011'], letter: 'ص' },
+  { code: 'markazi', name: 'مرکزی', color: '#0D233A', gradientEnd: '#050F1A', cardPrefixes: ['636795'], ibanCodes: ['010'], letter: 'م' },
   { code: 'other', name: 'سایر', color: '#3A3FAE', gradientEnd: '#1C206B', cardPrefixes: [], ibanCodes: [], letter: 'س' },
 ];
 

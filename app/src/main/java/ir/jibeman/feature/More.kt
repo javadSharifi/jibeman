@@ -170,7 +170,7 @@ fun MoreScreen(go: (Route) -> Unit) {
                 }, colors = SwitchDefaults.colors(checkedTrackColor = C.lime, checkedThumbColor = C.onLime))
             }
         }
-        T("جیب من · نسخه ۰٫۱ · کاملاً آفلاین", 11, color = C.muted, modifier = Modifier.padding(start = 22.dp, top = 14.dp))
+        T("جیب من · نسخه ${ir.jibeman.BuildConfig.VERSION_NAME} · کاملاً آفلاین", 11, color = C.muted, modifier = Modifier.padding(start = 22.dp, top = 14.dp))
     }
     if (editName) NameDialog(prefs.name, { prefs.name = it.trim().take(30) }) { editName = false }
 }

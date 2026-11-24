@@ -178,6 +178,54 @@ export interface SavingsPayment {
   txnId?: number;
 }
 
+export interface CompareSession {
+  id?: number;
+  title: string;
+  budget?: number; // rial
+  status: 'OPEN' | 'DECIDED' | 'ARCHIVED';
+  chosenItemId?: number;
+  decisionNote?: string;
+  decidedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CompareCriterion {
+  id?: number;
+  sessionId: number;
+  title: string;
+  why?: string;
+  strict: boolean; // خط قرمز / deal-breaker
+  weight: number; // 3 = بسیار مهم, 1 = معمولی, 0.5 = کم‌اهمیت
+  sortOrder: number;
+  createdAt: number;
+}
+
+export interface CompareItem {
+  id?: number;
+  sessionId: number;
+  name: string;
+  price?: number; // rial
+  storeName?: string;
+  url?: string;
+  warranty?: string;
+  pros?: string;
+  cons?: string;
+  note?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CompareCheck {
+  id?: number;
+  sessionId: number;
+  itemId: number;
+  criterionId: number;
+  state: 'PASS' | 'FAIL' | 'UNKNOWN';
+  note?: string;
+  updatedAt: number;
+}
+
 export interface Outbox {
   key: string; // `${tbl}|${id}`
   t: string;
@@ -205,6 +253,10 @@ export const SYNC_TABLES = [
   'rules',
   'savingsCommitments',
   'savingsPayments',
+  'compareSessions',
+  'compareCriteria',
+  'compareItems',
+  'compareChecks',
 ] as const;
 
 export type SyncTableName = (typeof SYNC_TABLES)[number];
@@ -234,6 +286,10 @@ export class JibemanDatabase extends Dexie {
   rules!: Table<Rule, number>;
   savingsCommitments!: Table<SavingsCommitment, number>;
   savingsPayments!: Table<SavingsPayment, number>;
+  compareSessions!: Table<CompareSession, number>;
+  compareCriteria!: Table<CompareCriterion, number>;
+  compareItems!: Table<CompareItem, number>;
+  compareChecks!: Table<CompareCheck, number>;
   outbox!: Table<Outbox, string>;
 
   constructor() {
@@ -281,6 +337,13 @@ export class JibemanDatabase extends Dexie {
 
     this.version(4).stores({
       installments: '++id, loanId, dueAt, paidTxnId, paidAt',
+    });
+
+    this.version(5).stores({
+      compareSessions: '++id, status, createdAt, updatedAt',
+      compareCriteria: '++id, sessionId, strict, sortOrder',
+      compareItems: '++id, sessionId, price, createdAt',
+      compareChecks: '++id, sessionId, itemId, criterionId, state',
     });
 
     this.use({

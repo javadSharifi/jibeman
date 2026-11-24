@@ -14,6 +14,7 @@ import {
   UserCheck,
   Wand2,
   Shield,
+  Scale,
 } from 'lucide-react';
 
 interface MoreProps {
@@ -24,6 +25,7 @@ export function More({ onNavigate }: MoreProps) {
   const [showIosGuide, setShowIosGuide] = useState(false);
 
   const menuItems = [
+    { id: 'compare', label: 'مقایسه خرید هوشمند', desc: 'دستیار انتخاب کالا، بررسی خط قرمزها، مقایسه دو کالا و ارزش خرید', icon: Scale, color: 'bg-emerald-500/20 text-emerald-300', badge: 'جدید' },
     { id: 'loans', label: 'وام و اقساط', desc: 'مدیریت وام‌ها، جدول بازپرداخت و یادآور', icon: Building2, color: 'bg-sky/15 text-sky' },
     { id: 'debts', label: 'بدهی و طلب', desc: 'پیگیری بدهکاران و طلبکاران با امکان ثبت تسویه', icon: HandCoins, color: 'bg-ok/15 text-ok' },
     { id: 'people', label: 'اشخاص و مخاطبین', desc: 'دفترچه کارت‌های بانکی، تلفن و وضعیت بی‌حسابی', icon: UserCheck, color: 'bg-purple-500/20 text-purple-300' },
@@ -74,7 +76,14 @@ export function More({ onNavigate }: MoreProps) {
                   <Icon size={20} />
                 </div>
                 <div>
-                  <h3 className="text-xs font-bold text-white">{item.label}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-white">{item.label}</h3>
+                    {item.badge && (
+                      <span className="text-[9px] font-black bg-lime text-onLime px-1.5 py-0.2 rounded-full">
+                        {item.badge}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-muted mt-0.5">{item.desc}</p>
                 </div>
               </div>

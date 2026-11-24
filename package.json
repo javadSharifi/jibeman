@@ -2,7 +2,7 @@
   "name": "jibeman",
   "private": true,
   "scripts": {
-    "build": "npm --prefix web run build && (cp -r web/dist dist 2>/dev/null || true)",
+    "build": "npm --prefix web run build && (cp -r web/dist/. dist/ 2>/dev/null || true)",
     "dev": "npm --prefix web run dev",
     "preview": "npm --prefix web run preview"
   }

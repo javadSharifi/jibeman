@@ -30,8 +30,8 @@ export function BankLogoBadge({
   const hasVector = bank?.code && [
     'blu', 'keshavarzi', 'mellat', 'saman', 'pasargad', 'parsian', 'refah',
     'ayandeh', 'maskan', 'dey', 'eghtesad', 'gardeshgari', 'iranzamin',
-    'karafarin', 'markazi', 'mehr', 'post', 'resalat', 'saderat',
-    'sanatmadan', 'sarmaye', 'shahr', 'sina', 'tosesaderat', 'tosetaavon'
+    'karafarin', 'markazi', 'mehr', 'melli', 'post', 'resalat', 'saderat',
+    'sanatmadan', 'sarmaye', 'sepah', 'shahr', 'sina', 'tejarat', 'tosesaderat', 'tosetaavon'
   ].includes(bank.code);
 
   return (
