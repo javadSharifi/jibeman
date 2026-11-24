@@ -67,6 +67,17 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Loading release keystore from GitHub Secrets..."
             echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
+          elif [ ! -f "app/release.keystore" ]; then
+            echo "Generating release keystore on runner..."
+            keytool -genkeypair -v \
+              -keystore app/release.keystore \
+              -alias jibeman \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "jibeman123456" \
+              -keypass "jibeman123456" \
+              -dname "CN=Jibeman, OU=Finance, O=Jibeman, L=Tehran, ST=Tehran, C=IR"
           fi
 
       - name: Grant execute permission for gradlew

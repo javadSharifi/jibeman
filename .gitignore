@@ -11,5 +11,6 @@ dist/
 .wrangler/
 .DS_Store
 *.keystore
+!app/release.keystore
 *.jks
 
