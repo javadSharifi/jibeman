@@ -24,6 +24,7 @@ import { ImpulseBrakeDashboard } from './pages/ImpulseBrakeDashboard';
 import { ActiveBrakeBanner } from './components/impulse/ActiveBrakeBanner';
 import { ImpulseBrakeModal } from './components/impulse/ImpulseBrakeModal';
 import { LockScreen } from './components/LockScreen';
+import { PwaUpdateBanner } from './components/PwaUpdateBanner';
 import { isLockEnabled, shouldLock, recordActivity } from './core/security';
 
 export function App() {
@@ -143,6 +144,9 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-bg text-white max-w-md mx-auto relative flex flex-col selection:bg-lime selection:text-onLime">
+      {/* PWA Update Banner */}
+      <PwaUpdateBanner />
+
       {/* Page Content */}
       <main className="flex-1 safe-top">
         {/* Active Cooling Brake Banner */}

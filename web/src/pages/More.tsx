@@ -16,7 +16,10 @@ import {
   Shield,
   ShieldAlert,
   Scale,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
+import { pwaManager } from '../core/pwa';
 
 interface MoreProps {
   onNavigate: (route: string) => void;
@@ -24,6 +27,30 @@ interface MoreProps {
 
 export function More({ onNavigate }: MoreProps) {
   const [showIosGuide, setShowIosGuide] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpdateStatus('در حال بررسی سرور...');
+    try {
+      const hasNew = await pwaManager.checkForUpdate();
+      if (hasNew) {
+        setUpdateStatus('نسخه جدید دریافت شد! در حال اعمال...');
+        setTimeout(() => {
+          pwaManager.applyUpdate();
+        }, 800);
+      } else {
+        setUpdateStatus('برنامه شما به‌روز است (نسخه ۱.۰.۰)');
+        setTimeout(() => setUpdateStatus(null), 4000);
+      }
+    } catch (_) {
+      setUpdateStatus('خطا در بررسی؛ لطفاً اتصال اینترنت را چک کنید.');
+      setTimeout(() => setUpdateStatus(null), 3000);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const menuItems = [
     { id: 'impulse', label: 'ترمز خرید هیجانی (خرید آگاهانه)', desc: 'قانون خروج از فروشگاه، تایمر تأخیر و داشبورد صرفه‌جویی', icon: ShieldAlert, color: 'bg-amber-500/20 text-amber-300', badge: 'جدید' },
@@ -49,7 +76,7 @@ export function More({ onNavigate }: MoreProps) {
       {/* iOS PWA Install Banner */}
       <div
         onClick={() => setShowIosGuide(true)}
-        className="p-4 rounded-[22px] bg-gradient-to-r from-[#1B3883] to-surface border border-white/10 mb-4 cursor-pointer active:scale-98 transition-transform"
+        className="p-4 rounded-[22px] bg-gradient-to-r from-[#1B3883] to-surface border border-white/10 mb-2.5 cursor-pointer active:scale-98 transition-transform"
       >
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-lime text-onLime flex items-center justify-center font-bold">
@@ -61,6 +88,29 @@ export function More({ onNavigate }: MoreProps) {
           </div>
           <ChevronLeft size={18} className="text-white/60" />
         </div>
+      </div>
+
+      {/* Check PWA Update Card */}
+      <div className="p-3.5 rounded-[22px] bg-surface border border-line mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-2xl bg-lime/15 text-lime flex items-center justify-center shrink-0">
+            <RefreshCw size={19} className={checkingUpdate ? 'animate-spin' : ''} />
+          </div>
+          <div className="min-w-0">
+            <span className="text-xs font-bold text-white block truncate">بررسی به‌روزرسانی (PWA)</span>
+            <span className="text-[10px] text-muted block truncate">
+              {updateStatus || 'بررسی و بارگذاری آخرین نسخه بدون حذف برنامه'}
+            </span>
+          </div>
+        </div>
+
+        <button
+          onClick={handleCheckUpdate}
+          disabled={checkingUpdate}
+          className="px-3.5 py-1.5 bg-lime text-onLime hover:bg-lime/90 active:scale-95 text-xs font-bold rounded-xl transition-all shrink-0 disabled:opacity-50 shadow"
+        >
+          {checkingUpdate ? 'در حال بررسی...' : 'بررسی نسخه'}
+        </button>
       </div>
 
       {/* Menu List */}
