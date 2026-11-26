@@ -73,4 +73,24 @@ class SmsParserTest {
         assertEquals(a, SmsIngest.hash("blu", SmsParser.normalize(bluCharge.replace("200,000", "۲۰۰٬۰۰۰"))))
         assertNotEquals(a, SmsIngest.hash("blu", SmsParser.normalize(bluCharge.replace("38,553,000", "38,353,000"))))
     }
+
+    @Test fun parsePastedSupportsTemplatesAndGenericSms() {
+        val blu = SmsParser.parsePasted(templates, bluDeposit)!!
+        assertEquals("blu", blu.bank)
+        assertEquals("INCOME", blu.type)
+        assertEquals(44_000_000L, blu.amount)
+
+        val mellat = SmsParser.parsePasted(templates, "بانک ملت\nبرداشت: ۲۵۰٬۰۰۰ ریال\nمانده: ۴٬۰۰۰٬۰۰۰\nکارت ۶۱۰۴*")!!
+        assertEquals("mellat", mellat.bank)
+        assertEquals("EXPENSE", mellat.type)
+        assertEquals(250_000L, mellat.amount)
+        assertEquals(4_000_000L, mellat.balance)
+        assertEquals("6104", mellat.card4)
+
+        val tomanGeneric = SmsParser.parsePasted(templates, "واریز مبلغ ۱۵۰٬۰۰۰ تومان")!!
+        assertEquals("INCOME", tomanGeneric.type)
+        assertEquals(1_500_000L, tomanGeneric.amount)
+
+        assertNull(SmsParser.parsePasted(templates, "رمز پویا: ۱۲۳۴۵۶"))
+    }
 }

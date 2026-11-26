@@ -95,11 +95,6 @@ class Prefs(ctx: Context) {
         biometricS.value = false
     }
 
-    private val smsS = mutableStateOf(sp.getBoolean("sms", true))
-    var smsEnabled: Boolean
-        get() = smsS.value
-        set(v) { smsS.value = v; sp.edit().putBoolean("sms", v).apply() }
-
     private val remindS = mutableStateOf(sp.getBoolean("remind", true))
     var remindersEnabled: Boolean
         get() = remindS.value

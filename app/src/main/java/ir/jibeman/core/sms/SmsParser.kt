@@ -101,4 +101,52 @@ object SmsParser {
         if (y !in 1300..1500 || mo !in 1..12 || d !in 1..31 || h !in 0..23 || mi !in 0..59) return null
         return Jalali.millis(y, mo, d, h, mi)
     }
+
+    /** Parses manually pasted bank SMS text: tries loaded bank templates first, then generic Iranian bank formats. */
+    fun parsePasted(templates: List<Template>, raw: String): Parsed? {
+        val norm = normalize(raw)
+        if (norm.isBlank()) return null
+        detect(templates, "", norm)?.let { (t, by) ->
+            parse(t, norm, by)?.let { return it }
+        }
+        return parseGeneric(norm)
+    }
+
+    private fun parseGeneric(norm: String): Parsed? {
+        val hasIncome = Regex("واریز|نشست|\\+").containsMatchIn(norm)
+        val hasExpense = Regex("برداشت|خرید|پرید|انتقال|-").containsMatchIn(norm)
+        if (!hasIncome && !hasExpense) return null
+        val type = if (hasIncome && !hasExpense) "INCOME" else "EXPENSE"
+
+        val amtRx = Regex("(?:مبلغ|واریز|برداشت|خرید|انتقال)[:\\s]*(\\d+)")
+        val unitAmtRx = Regex("(\\d{4,})\\s*(?:ریال|ريال|تومان)")
+        val rawAmt = (amtRx.find(norm) ?: unitAmtRx.find(norm))?.groupValues?.getOrNull(1)?.toLongOrNull() ?: return null
+        if (rawAmt <= 0L) return null
+
+        val isToman = norm.contains("تومان")
+        val amount = if (isToman) rawAmt * 10L else rawAmt
+        val rawBal = Regex("(?:مانده|موجودی)[:\\s]*(\\d+)").find(norm)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        val balance = rawBal?.let { if (isToman) it * 10L else it }
+        val card4 = (Regex("(?:کارت|card)[^\\d\\n]*(\\d{4})", RegexOption.IGNORE_CASE).find(norm)
+            ?: Regex("(\\d{4})\\*").find(norm))?.groupValues?.getOrNull(1)
+        val bank = when {
+            norm.contains("بلو") || norm.contains("نشست") || norm.contains("پرید") -> "blu"
+            norm.contains("کشاورزی") || norm.contains("bki") -> "keshavarzi"
+            norm.contains("ملت") || norm.contains("mellat", ignoreCase = true) -> "mellat"
+            norm.contains("بانک ملی") || norm.contains("melli", ignoreCase = true) -> "melli"
+            else -> "other"
+        }
+        val desc = if (type == "INCOME") "واریز بانکی" else "برداشت / خرید بانکی"
+        return Parsed(
+            bank = bank,
+            type = type,
+            amount = amount,
+            balance = balance,
+            occurredAt = null,
+            card4 = card4,
+            accountNo = null,
+            description = desc,
+            bySender = false,
+        )
+    }
 }

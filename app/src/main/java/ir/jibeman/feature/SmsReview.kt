@@ -1,10 +1,8 @@
 package ir.jibeman.feature
 
-import android.Manifest
-import android.content.pm.PackageManager
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,12 +19,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -37,11 +34,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ir.jibeman.App
 import ir.jibeman.app
 import ir.jibeman.core.Banks
 import ir.jibeman.core.Jalali
@@ -53,7 +52,7 @@ import ir.jibeman.core.db.RawRow
 import ir.jibeman.core.db.Rule
 import ir.jibeman.core.db.TxType
 import ir.jibeman.core.db.Txn
-import ir.jibeman.core.sms.scanInbox
+import ir.jibeman.core.sms.SmsIngest
 import ir.jibeman.ui.C
 import ir.jibeman.ui.CatIcon
 import ir.jibeman.ui.Empty
@@ -65,15 +64,11 @@ import ir.jibeman.ui.Mono
 import ir.jibeman.ui.T
 import ir.jibeman.ui.Tile
 import ir.jibeman.ui.TopBar
+import ir.jibeman.ui.Vazir
 import ir.jibeman.ui.glowBg
 import kotlinx.coroutines.launch
 
 private const val READY = 90
-private const val SCAN_DAYS = 90L
-
-private fun hasSms(ctx: android.content.Context) =
-    ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
 
 @Composable
 fun SmsReviewScreen(back: () -> Unit, add: (AddReq) -> Unit) {
@@ -81,8 +76,8 @@ fun SmsReviewScreen(back: () -> Unit, add: (AddReq) -> Unit) {
     val dao = app.dao
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var granted by remember { mutableStateOf(hasSms(ctx)) }
-    var scanning by remember { mutableStateOf<String?>(null) }
+    var smsInput by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
     val pending by remember { dao.pending() }.collectAsStateWithLifecycle(emptyList())
     val checks by remember { dao.balanceChecks() }.collectAsStateWithLifecycle(emptyList())
     val accounts by remember { dao.balances() }.collectAsStateWithLifecycle(emptyList())
@@ -92,6 +87,37 @@ fun SmsReviewScreen(back: () -> Unit, add: (AddReq) -> Unit) {
     val gaps = checks.filter { it.bank != it.app }
     val ready = pending.filter { it.raw.confidence >= READY && it.raw.accountId != null && it.accountName != null }
     fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
+
+    fun processText(raw: String) {
+        val text = raw.trim()
+        if (text.isEmpty() || busy) return
+        busy = true
+        scope.launch {
+            try {
+                when (app.smsIngest.ingestPasted(text)) {
+                    SmsIngest.Result.ADDED -> {
+                        smsInput = ""
+                        toast("پیامک پردازش شد و به صف تأیید اضافه شد")
+                    }
+                    SmsIngest.Result.DUPLICATE -> toast("این پیامک قبلاً ثبت شده است")
+                    SmsIngest.Result.IGNORED -> toast("الگوی تراکنش بانکی در این متن پیدا نشد")
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun pasteFromClipboard() {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty().trim()
+        if (clip.isEmpty()) {
+            toast("متنی در کلیپ‌بورد نیست")
+            return
+        }
+        smsInput = clip
+        processText(clip)
+    }
 
     suspend fun accept(r: RawRow): Long? {
         val accId = r.raw.accountId?.takeIf { r.accountName != null } ?: run { toast("اول حساب را انتخاب کن"); return null }
@@ -104,49 +130,45 @@ fun SmsReviewScreen(back: () -> Unit, add: (AddReq) -> Unit) {
         return id
     }
 
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        granted = hasSms(ctx)
-        if (granted) app.prefs.smsEnabled = true
-    }
-
     LazyColumn(Modifier.fillMaxSize().glowBg(), contentPadding = PaddingValues(bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { TopBar("پیامک‌های بانک", back) }
+        item { TopBar("ثبت با متن پیامک", back) }
 
-        if (!granted) item {
-            Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CatIcon(Ic.msg, C.accent)
-                    T("ثبت خودکار از پیامک بانک", 14, 700, modifier = Modifier.weight(1f))
-                }
-                T(
-                    "جیب من پیامک‌های کشاورزی و بلو را می‌خواند و تراکنش را برای تأیید تو آماده می‌کند. " +
-                        "پیامک‌ها از گوشی بیرون نمی‌روند (برنامه اجازه اینترنت ندارد) و پیامک‌های غیربانکی اصلاً پردازش نمی‌شوند.",
-                    12.5f, color = C.t2, modifier = Modifier.padding(top = 10.dp, bottom = 12.dp),
-                )
-                LimeButton("اجازه خواندن پیامک", Modifier.fillMaxWidth(), Ic.check) {
-                    permLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
-                }
-            }
-        } else item {
+        item {
             Tile(Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     CatIcon(Ic.msg, C.accent, 36.dp)
                     Column(Modifier.weight(1f)) {
-                        T("دریافت خودکار پیامک", 13.5f, 700)
-                        T(Banks.all.filter { it.code == "keshavarzi" || it.code == "blu" }.joinToString("، ") { it.name }, 11, color = C.muted)
+                        T("چسباندن هوشمند پیامک بانک", 13.5f, 700)
+                        T("بدون نیاز به دسترسی پیامک · پردازش کاملاً آفلاین", 11, color = C.muted)
                     }
-                    Switch(app.prefs.smsEnabled, { app.prefs.smsEnabled = it }, colors = SwitchDefaults.colors(checkedTrackColor = C.lime, checkedThumbColor = C.onLime))
                 }
-                GhostButton(scanning ?: "خواندن پیامک‌های ۳ ماه اخیر", Modifier.padding(top = 10.dp).fillMaxWidth(), Ic.search) {
-                    if (scanning != null) return@GhostButton
-                    scanning = "در حال خواندن…"
-                    scope.launch {
-                        val (added, dup) = scanInbox(ctx, (ctx.applicationContext as App).smsIngest, System.currentTimeMillis() - SCAN_DAYS * 86_400_000L) { i, n ->
-                            scanning = "در حال خواندن… ${Money.fa(i.toString())} از ${Money.fa(n.toString())}"
-                        }
-                        scanning = null
-                        toast(if (added == 0) "پیامک بانکی جدیدی پیدا نشد" else "${Money.fa(added.toString())} پیامک بانکی پیدا شد" + if (dup > 0) " (${Money.fa(dup.toString())} تکراری)" else "")
+
+                Box(
+                    Modifier
+                        .padding(top = 12.dp)
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 92.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(C.ink.copy(alpha = 0.04f))
+                        .border(1.dp, C.line, RoundedCornerShape(14.dp))
+                        .padding(12.dp),
+                ) {
+                    if (smsInput.isEmpty()) {
+                        T("متن پیامک بانکی را اینجا جای‌گذاری کنید…", 12, color = C.muted)
                     }
+                    BasicTextField(
+                        value = smsInput,
+                        onValueChange = { smsInput = it },
+                        maxLines = 6,
+                        cursorBrush = SolidColor(C.lime),
+                        textStyle = TextStyle(color = C.ink, fontSize = 13.sp, fontFamily = Vazir, fontWeight = FontWeight.Normal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GhostButton("از کلیپ‌بورد", Modifier.weight(1f), Ic.copy) { pasteFromClipboard() }
+                    LimeButton("پردازش پیامک", Modifier.weight(1f), Ic.check, height = 48.dp) { processText(smsInput) }
                 }
             }
         }
@@ -167,7 +189,7 @@ fun SmsReviewScreen(back: () -> Unit, add: (AddReq) -> Unit) {
             }
         }
 
-        if (pending.isEmpty()) item { Empty(if (granted) "پیامکی در انتظار بررسی نیست." else "بعد از دادن اجازه، پیامک‌های بانک این‌جا می‌آیند.") }
+        if (pending.isEmpty()) item { Empty("پیامکی در صف بررسی نیست. متن پیامک بانکی را در کادر بالا بچسبانید.") }
 
         items(pending, key = { it.raw.id }) { r ->
             ReviewCard(

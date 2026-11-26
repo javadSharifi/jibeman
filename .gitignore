@@ -5,6 +5,7 @@ local.properties
 .idea/
 *.iml
 .kotlin/
+node_modules/
 web/node_modules/
 web/dist/
 dist/
