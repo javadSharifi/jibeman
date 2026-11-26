@@ -21,13 +21,26 @@ fun runGitCommand(vararg args: String): String {
     }
 }
 
+fun readWebPackageVersion(): String {
+    return try {
+        val pkgFile = file("../web/package.json")
+        if (!pkgFile.exists()) return ""
+        val match = Regex(""""version"\s*:\s*"([^"]+)"""").find(pkgFile.readText())
+        match?.groupValues?.getOrNull(1)?.trim()?.removePrefix("v") ?: ""
+    } catch (_: Throwable) {
+        ""
+    }
+}
+
 fun resolveVersionName(): String {
     val prop = findProperty("versionName") as? String
     if (!prop.isNullOrBlank()) return prop.removePrefix("v")
     val env = System.getenv("VERSION_NAME")
     if (!env.isNullOrBlank()) return env.removePrefix("v")
     val gitTag = runGitCommand("git", "describe", "--tags", "--abbrev=0").removePrefix("v")
-    return if (gitTag.isNotBlank()) gitTag else "0.1.0"
+    if (gitTag.isNotBlank()) return gitTag
+    val pkgVer = readWebPackageVersion()
+    return if (pkgVer.isNotBlank()) pkgVer else "0.1.0"
 }
 
 fun resolveVersionCode(vName: String): Int {

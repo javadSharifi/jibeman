@@ -1,5 +1,6 @@
 {
   "name": "jibeman",
+  "version": "0.2.2",
   "private": true,
   "scripts": {
     "build": "npm --prefix web run build && (cp -r web/dist/. dist/ 2>/dev/null || true)",

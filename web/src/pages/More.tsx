@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building2,
   HandCoins,
@@ -17,9 +17,9 @@ import {
   ShieldAlert,
   Scale,
   RefreshCw,
-  CheckCircle2,
 } from 'lucide-react';
 import { pwaManager } from '../core/pwa';
+import { APP_VERSION, APP_VERSION_INFO, formatVersionFa } from '../core/version';
 
 interface MoreProps {
   onNavigate: (route: string) => void;
@@ -29,19 +29,40 @@ export function More({ onNavigate }: MoreProps) {
   const [showIosGuide, setShowIosGuide] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [hasPendingUpdate, setHasPendingUpdate] = useState(false);
+  const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    return pwaManager.subscribe((state) => {
+      setHasPendingUpdate(state.hasUpdate);
+      setAvailableVersion(state.availableVersion);
+    });
+  }, []);
 
   const handleCheckUpdate = async () => {
+    if (hasPendingUpdate) {
+      setCheckingUpdate(true);
+      setUpdateStatus('در حال نصب نسخه جدید...');
+      await pwaManager.applyUpdate();
+      return;
+    }
+
     setCheckingUpdate(true);
     setUpdateStatus('در حال بررسی سرور...');
     try {
-      const hasNew = await pwaManager.checkForUpdate();
+      const hasNew = await pwaManager.checkForUpdate(true);
       if (hasNew) {
-        setUpdateStatus('نسخه جدید دریافت شد! در حال اعمال...');
+        const nextVer = pwaManager.availableVersion;
+        setUpdateStatus(
+          nextVer
+            ? `نسخه جدید ${formatVersionFa(nextVer)} دریافت شد! در حال اعمال...`
+            : 'نسخه جدید دریافت شد! در حال اعمال...'
+        );
         setTimeout(() => {
-          pwaManager.applyUpdate();
+          void pwaManager.applyUpdate();
         }, 800);
       } else {
-        setUpdateStatus('برنامه شما به‌روز است (نسخه ۱.۰.۰)');
+        setUpdateStatus(`برنامه شما به‌روز است (نسخه ${formatVersionFa(APP_VERSION)})`);
         setTimeout(() => setUpdateStatus(null), 4000);
       }
     } catch (_) {
@@ -99,7 +120,12 @@ export function More({ onNavigate }: MoreProps) {
           <div className="min-w-0">
             <span className="text-xs font-bold text-white block truncate">بررسی به‌روزرسانی (PWA)</span>
             <span className="text-[10px] text-muted block truncate">
-              {updateStatus || 'بررسی و بارگذاری آخرین نسخه بدون حذف برنامه'}
+              {updateStatus ||
+                (hasPendingUpdate
+                  ? availableVersion && availableVersion !== APP_VERSION
+                    ? `نسخه جدید ${formatVersionFa(availableVersion)} آماده نصب است`
+                    : 'نسخه جدید آماده نصب است'
+                  : 'بررسی و بارگذاری آخرین نسخه بدون حذف برنامه')}
             </span>
           </div>
         </div>
@@ -109,7 +135,11 @@ export function More({ onNavigate }: MoreProps) {
           disabled={checkingUpdate}
           className="px-3.5 py-1.5 bg-lime text-onLime hover:bg-lime/90 active:scale-95 text-xs font-bold rounded-xl transition-all shrink-0 disabled:opacity-50 shadow"
         >
-          {checkingUpdate ? 'در حال بررسی...' : 'بررسی نسخه'}
+          {checkingUpdate
+            ? 'در حال بررسی...'
+            : hasPendingUpdate
+              ? 'نصب نسخه جدید'
+              : 'بررسی نسخه'}
         </button>
       </div>
 
@@ -141,8 +171,16 @@ export function More({ onNavigate }: MoreProps) {
 
       {/* About Box */}
       <div className="mt-8 text-center text-muted text-[11px] space-y-1">
-        <div className="font-bold text-white/70">برنامه «جیب من» نسخه وب ۱.۰</div>
+        <div className="font-bold text-white/70">
+          برنامه «جیب من» · نسخه وب {formatVersionFa(APP_VERSION)}
+          {APP_VERSION_INFO.build ? ` (ساخت ${formatVersionFa(String(APP_VERSION_INFO.build))})` : ''}
+        </div>
         <div>کاملاً آفلاین · بدون سرور · امن و رمزنگاری‌شده در حافظه دستگاه</div>
+        {APP_VERSION_INFO.commit && (
+          <div className="text-[10px] text-muted/60 font-mono" dir="ltr">
+            v{APP_VERSION}{APP_VERSION_INFO.build ? `+${APP_VERSION_INFO.build}` : ''} · {APP_VERSION_INFO.commit}
+          </div>
+        )}
       </div>
 
       {/* iOS Install Guide Modal */}
