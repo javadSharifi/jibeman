@@ -1,11 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { X, Delete, ArrowLeftRight, Check, ShieldAlert } from 'lucide-react';
 import { db, type Account, type Category } from '../core/db';
+import {
+  getSavingsAccountEarmarks,
+  saveSavingsDepositAllocations,
+  type SavingsCommitmentWithRemaining,
+  type SavingsDepositAllocation,
+} from '../core/db/helpers';
 import { Money } from '../core/money';
 import { AmountInput } from './AmountInput';
 import { Select } from './Select';
 import { CategoryIcon } from './UI';
 import { ImpulseBrakeModal } from './impulse/ImpulseBrakeModal';
+import {
+  SavingsDepositBox,
+  createDefaultSavingsAllocation,
+  validateSavingsAllocation,
+} from './SavingsDepositBox';
 
 interface QuickAddProps {
   isOpen: boolean;
@@ -22,6 +33,9 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
   const [selectedToAccId, setSelectedToAccId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [returnCommitment, setReturnCommitment] = useState(true);
+  const [savingsAllocation, setSavingsAllocation] = useState<SavingsDepositAllocation>(createDefaultSavingsAllocation);
+  const [openEarmarks, setOpenEarmarks] = useState<SavingsCommitmentWithRemaining[]>([]);
+  const [releaseEarmarkId, setReleaseEarmarkId] = useState<number | undefined>();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -33,6 +47,8 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
       setAmountStr('');
       setTitle('');
       setReturnCommitment(true);
+      setSavingsAllocation(createDefaultSavingsAllocation());
+      setReleaseEarmarkId(undefined);
 
       // Load data
       db.accounts.filter(a => !a.archived).sortBy('sortOrder').then(accs => {
@@ -54,12 +70,30 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
     }
   }, [type]);
 
-  if (!isOpen) return null;
-
   const rial = Money.parseToman(amountStr) ?? 0;
   const selectedAcc = accounts.find(a => a.id === selectedAccId);
   const targetAcc = accounts.find(a => a.id === selectedToAccId);
   const isWithdrawalFromSavings = Boolean(selectedAcc?.isSavings && (type === 'EXPENSE' || (type === 'TRANSFER' && !targetAcc?.isSavings)));
+  const isDepositToSavings = Boolean(
+    (type === 'INCOME' && selectedAcc?.isSavings) ||
+    (type === 'TRANSFER' && targetAcc?.isSavings && selectedAccId !== selectedToAccId)
+  );
+  const depositTargetAccId = type === 'TRANSFER' ? selectedToAccId : selectedAccId;
+
+  useEffect(() => {
+    if (!isOpen || !isWithdrawalFromSavings || !selectedAccId) {
+      setOpenEarmarks([]);
+      setReleaseEarmarkId(undefined);
+      return;
+    }
+    getSavingsAccountEarmarks(selectedAccId).then(res => {
+      const active = [...res.loanReserves, ...res.personHolds].filter(e => e.remaining > 0);
+      setOpenEarmarks(active);
+      setReleaseEarmarkId(undefined);
+    });
+  }, [isOpen, isWithdrawalFromSavings, selectedAccId]);
+
+  if (!isOpen) return null;
 
   const handleDigit = (d: string) => {
     setAmountStr(prev => {
@@ -74,6 +108,14 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
 
   const handleSave = async () => {
     if (rial <= 0 || !selectedAccId) return;
+
+    if (isDepositToSavings) {
+      const err = validateSavingsAllocation(savingsAllocation, rial);
+      if (err) {
+        alert(err);
+        return;
+      }
+    }
 
     let txnId: number;
     if (type === 'TRANSFER') {
@@ -104,14 +146,41 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
       });
     }
 
-    if (isWithdrawalFromSavings && returnCommitment) {
+    if (isWithdrawalFromSavings && releaseEarmarkId) {
+      const earmarked = openEarmarks.find(e => e.id === releaseEarmarkId);
+      if (earmarked) {
+        const settleAmt = Math.min(rial, earmarked.remaining);
+        await db.savingsCommitments.update(releaseEarmarkId, {
+          paidAmount: (earmarked.paidAmount || 0) + settleAmt,
+        });
+        await db.savingsPayments.add({
+          commitmentId: releaseEarmarkId,
+          amount: settleAmt,
+          at: Date.now(),
+          txnId,
+        });
+      }
+    } else if (isWithdrawalFromSavings && returnCommitment) {
       await db.savingsCommitments.add({
         accountId: selectedAccId,
         txnId,
         amount: rial,
         paidAmount: 0,
+        kind: 'WITHDRAWAL',
         note: title || (type === 'TRANSFER' ? 'انتقال از پس‌انداز' : 'برداشت از پس‌انداز'),
         createdAt: Date.now(),
+      });
+    }
+
+    if (isDepositToSavings && depositTargetAccId) {
+      await saveSavingsDepositAllocations({
+        accountId: depositTargetAccId,
+        txnId,
+        amountRial: rial,
+        allocation: {
+          ...savingsAllocation,
+          note: title.trim() || undefined,
+        },
       });
     }
 
@@ -121,7 +190,7 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center safe-sheet bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md bg-sheet rounded-t-[32px] border-t border-white/10 p-4 flex flex-col overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-sheet rounded-t-[32px] border-t border-white/10 p-4 flex flex-col max-h-[92vh] overflow-y-auto no-scrollbar">
         {/* Handle bar & Close */}
         <div className="flex items-center justify-between pb-2">
           <div className="w-10 h-1.5 rounded-full bg-white/20 mx-auto" />
@@ -225,23 +294,63 @@ export function QuickAdd({ isOpen, onClose, defaultType = 'EXPENSE', onSuccess }
             />
           </div>
 
-          {/* Savings Return Commitment Checkbox */}
+          {/* Savings Deposit Purpose / Loan & Person Earmarking */}
+          {isDepositToSavings && (
+            <SavingsDepositBox
+              amountRial={rial}
+              value={savingsAllocation}
+              onChange={setSavingsAllocation}
+            />
+          )}
+
+          {/* Savings Return Commitment / Earmark Release */}
           {isWithdrawalFromSavings && (
-            <div
-              onClick={() => setReturnCommitment(prev => !prev)}
-              className="flex items-center gap-2.5 p-2.5 rounded-xl bg-lime/10 border border-lime/25 cursor-pointer text-xs select-none"
-            >
-              <input
-                type="checkbox"
-                checked={returnCommitment}
-                onChange={e => setReturnCommitment(e.target.checked)}
-                className="accent-lime w-4 h-4 rounded cursor-pointer"
-                onClick={e => e.stopPropagation()}
-              />
-              <div className="flex-1">
-                <span className="font-bold text-white">این مبلغ را به پس‌انداز برمی‌گردانم</span>
-                <span className="text-[10px] text-white/60 block mt-0.5">ثبت تعهد بازگشت (طلب از خود) جهت بازگرداندن در آینده</span>
-              </div>
+            <div className="space-y-2">
+              {openEarmarks.length > 0 && (
+                <div className="p-2.5 rounded-xl bg-sky/10 border border-sky/25 space-y-1.5 text-xs">
+                  <span className="font-bold text-white block text-[11px]">
+                    برداشت از محل وام/امانت؟ (اختیاری)
+                  </span>
+                  <Select
+                    size="sm"
+                    value={releaseEarmarkId ?? 0}
+                    onChange={(val) => {
+                      const id = Number(val);
+                      setReleaseEarmarkId(id === 0 ? undefined : id);
+                      if (id !== 0) setReturnCommitment(false);
+                    }}
+                    options={[
+                      { value: 0, label: 'برداشت عادی از پس‌انداز' },
+                      ...openEarmarks
+                        .filter((e): e is SavingsCommitmentWithRemaining & { id: number } => e.id != null)
+                        .map(e => ({
+                          value: e.id,
+                          label: e.note || (e.kind === 'PERSON_HOLD' ? `امانت ${e.personName}` : 'ذخیره وام'),
+                          sublabel: `${Money.toman(e.remaining)} تومان`,
+                        })),
+                    ]}
+                  />
+                </div>
+              )}
+
+              {!releaseEarmarkId && (
+                <div
+                  onClick={() => setReturnCommitment(prev => !prev)}
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl bg-lime/10 border border-lime/25 cursor-pointer text-xs select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={returnCommitment}
+                    onChange={e => setReturnCommitment(e.target.checked)}
+                    className="accent-lime w-4 h-4 rounded cursor-pointer"
+                    onClick={e => e.stopPropagation()}
+                  />
+                  <div className="flex-1">
+                    <span className="font-bold text-white">این مبلغ را به پس‌انداز برمی‌گردانم</span>
+                    <span className="text-[10px] text-white/60 block mt-0.5">ثبت تعهد بازگشت (طلب از خود) جهت بازگرداندن در آینده</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

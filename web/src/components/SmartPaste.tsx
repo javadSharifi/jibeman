@@ -4,7 +4,13 @@ import { parseBankSms, type ParsedSms } from '../core/parser';
 import { getBankByCode } from '../core/banks';
 import { Money } from '../core/money';
 import { db, type Account, type Category } from '../core/db';
+import { saveSavingsDepositAllocations, type SavingsDepositAllocation } from '../core/db/helpers';
 import { Select } from './Select';
+import {
+  SavingsDepositBox,
+  createDefaultSavingsAllocation,
+  validateSavingsAllocation,
+} from './SavingsDepositBox';
 
 import { revealRows } from '../core/db/protectedRows';
 
@@ -21,11 +27,13 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedAccId, setSelectedAccId] = useState<number | null>(null);
   const [selectedCatId, setSelectedCatId] = useState<number | null>(null);
+  const [savingsAllocation, setSavingsAllocation] = useState<SavingsDepositAllocation>(createDefaultSavingsAllocation);
 
   React.useEffect(() => {
     if (isOpen) {
       setSmsText('');
       setParsed(null);
+      setSavingsAllocation(createDefaultSavingsAllocation());
       Promise.all([
         db.accounts.filter(a => !a.archived).toArray(),
         db.categories.toArray(),
@@ -38,6 +46,9 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const selectedAcc = accounts.find(a => a.id === selectedAccId);
+  const isDepositToSavings = Boolean(parsed?.type === 'INCOME' && selectedAcc?.isSavings);
 
   const handleParse = (text: string) => {
     setSmsText(text);
@@ -92,7 +103,15 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
   const handleConfirm = async () => {
     if (!parsed || !selectedAccId) return;
 
-    await db.txns.add({
+    if (isDepositToSavings) {
+      const err = validateSavingsAllocation(savingsAllocation, parsed.amount);
+      if (err) {
+        alert(err);
+        return;
+      }
+    }
+
+    const txnId = await db.txns.add({
       type: parsed.type,
       amount: parsed.amount,
       accountId: selectedAccId,
@@ -104,6 +123,18 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
       createdAt: Date.now(),
     });
 
+    if (isDepositToSavings) {
+      await saveSavingsDepositAllocations({
+        accountId: selectedAccId,
+        txnId,
+        amountRial: parsed.amount,
+        allocation: {
+          ...savingsAllocation,
+          note: parsed.description || undefined,
+        },
+      });
+    }
+
     onClose();
     if (onSuccess) onSuccess();
   };
@@ -112,7 +143,7 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md bg-sheet rounded-[28px] border border-white/10 p-5 flex flex-col shadow-2xl max-h-[min(90vh,100%)] no-scrollbar">
+      <div className="w-full max-w-md bg-sheet rounded-[28px] border border-white/10 p-5 flex flex-col shadow-2xl max-h-[min(90vh,100%)] overflow-y-auto no-scrollbar">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-line">
           <div className="flex items-center gap-2">
@@ -215,6 +246,14 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
                 />
               </div>
             </div>
+
+            {isDepositToSavings && (
+              <SavingsDepositBox
+                amountRial={parsed.amount}
+                value={savingsAllocation}
+                onChange={setSavingsAllocation}
+              />
+            )}
 
             {/* Confirm button */}
             <button

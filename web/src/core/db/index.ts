@@ -160,6 +160,8 @@ export interface Rule {
   enabled: boolean;
 }
 
+export type SavingsCommitmentKind = 'WITHDRAWAL' | 'LOAN_RESERVE' | 'PERSON_HOLD';
+
 export interface SavingsCommitment {
   id?: number;
   accountId: number;
@@ -168,6 +170,12 @@ export interface SavingsCommitment {
   paidAmount: number; // rial
   note?: string;
   createdAt: number;
+  kind?: SavingsCommitmentKind;
+  loanId?: number;
+  targetYear?: number;
+  targetMonth?: number;
+  personId?: number;
+  personName?: string;
 }
 
 export interface SavingsPayment {

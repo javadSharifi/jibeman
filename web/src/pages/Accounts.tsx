@@ -1,8 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { AmountInput } from '../components/AmountInput';
-import { Plus, X, CreditCard, Wallet, Trash2, Check, Edit2, Pencil, PiggyBank, RotateCcw, ArrowRight, Eye, Copy } from 'lucide-react';
+import { Plus, X, CreditCard, Wallet, Trash2, Check, Edit2, Pencil, PiggyBank, RotateCcw, ArrowRight, Eye, Copy, Building2, UserCheck } from 'lucide-react';
 import { db, type Account } from '../core/db';
-import { getAccountsWithBalances, getSavingsCommitments, returnToSavings, type AccountWithBalance, type SavingsCommitmentWithRemaining } from '../core/db/helpers';
+import {
+  getAccountsWithBalances,
+  getSavingsCommitments,
+  getSavingsAccountEarmarks,
+  releaseSavingsEarmark,
+  returnToSavings,
+  type AccountWithBalance,
+  type SavingsCommitmentWithRemaining,
+  type SavingsAccountEarmarks,
+} from '../core/db/helpers';
 import { Jalali } from '../core/jalali';
 import { Banks, findBankByCardPrefix } from '../core/banks';
 import { BankKit, CardPalettes } from '../core/bankKit';
@@ -39,13 +48,26 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
   const [accountToDelete, setAccountToDelete] = useState<AccountWithBalance | null>(null);
 
   // Savings tracking states
-  const [savingsMap, setSavingsMap] = useState<Record<number, { remaining: number; count: number }>>({});
+  const [savingsMap, setSavingsMap] = useState<
+    Record<number, { remaining: number; count: number; loanReserved: number; personHold: number; totalEarmarked: number }>
+  >({});
   const [savingsDetailAccount, setSavingsDetailAccount] = useState<AccountWithBalance | null>(null);
   const [savingsCommitmentsList, setSavingsCommitmentsList] = useState<SavingsCommitmentWithRemaining[]>([]);
+  const [savingsEarmarks, setSavingsEarmarks] = useState<SavingsAccountEarmarks>({
+    loanReserves: [],
+    personHolds: [],
+    loanReservedTotal: 0,
+    personHoldTotal: 0,
+    totalEarmarked: 0,
+  });
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [selectedCommitment, setSelectedCommitment] = useState<SavingsCommitmentWithRemaining | null>(null);
   const [returnSourceAccId, setReturnSourceAccId] = useState<number | undefined>();
   const [returnAmountStr, setReturnAmountStr] = useState('');
+  const [releaseTarget, setReleaseTarget] = useState<SavingsCommitmentWithRemaining | null>(null);
+  const [releaseMode, setReleaseMode] = useState<'NO_TXN' | 'EXPENSE' | 'TRANSFER'>('NO_TXN');
+  const [releaseToAccId, setReleaseToAccId] = useState<number | undefined>();
+  const [releaseAmountStr, setReleaseAmountStr] = useState('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const handleCopy = (text: string, field: string) => {
@@ -66,21 +88,80 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
       })
     );
     setAccounts(revealedList);
-    const map: Record<number, { remaining: number; count: number }> = {};
+    const map: Record<number, { remaining: number; count: number; loanReserved: number; personHold: number; totalEarmarked: number }> = {};
     for (const a of revealedList) {
       if (a.isSavings && a.id) {
-        const comms = await getSavingsCommitments(a.id);
+        const [comms, earmarks] = await Promise.all([
+          getSavingsCommitments(a.id),
+          getSavingsAccountEarmarks(a.id),
+        ]);
         const rem = comms.reduce((acc, c) => acc + c.remaining, 0);
-        map[a.id] = { remaining: rem, count: comms.filter(c => c.remaining > 0).length };
+        map[a.id] = {
+          remaining: rem,
+          count: comms.filter(c => c.remaining > 0).length,
+          loanReserved: earmarks.loanReservedTotal,
+          personHold: earmarks.personHoldTotal,
+          totalEarmarked: earmarks.totalEarmarked,
+        };
       }
     }
     setSavingsMap(map);
   };
 
   const openSavingsDetail = async (acc: AccountWithBalance) => {
-    const comms = await getSavingsCommitments(acc.id!);
+    const [comms, earmarks] = await Promise.all([
+      getSavingsCommitments(acc.id!),
+      getSavingsAccountEarmarks(acc.id!),
+    ]);
     setSavingsCommitmentsList(comms);
+    setSavingsEarmarks(earmarks);
     setSavingsDetailAccount(acc);
+  };
+
+  const openReleaseModal = (item: SavingsCommitmentWithRemaining) => {
+    const otherAccs = accounts.filter(a => a.id !== item.accountId);
+    setReleaseTarget(item);
+    setReleaseMode(item.kind === 'PERSON_HOLD' ? 'EXPENSE' : 'NO_TXN');
+    setReleaseToAccId(otherAccs[0]?.id);
+    setReleaseAmountStr(Money.tomanInput(item.remaining));
+  };
+
+  const handleExecuteRelease = async () => {
+    if (!releaseTarget?.id) return;
+    const rial = Money.parseToman(releaseAmountStr);
+    if (!rial || rial <= 0 || rial > releaseTarget.remaining) {
+      alert(`مبلغ باید بیشتر از صفر و حداکثر ${Money.toman(releaseTarget.remaining)} تومان باشد.`);
+      return;
+    }
+    if (releaseMode === 'TRANSFER' && !releaseToAccId) {
+      alert('لطفاً حساب مقصد را انتخاب کنید.');
+      return;
+    }
+
+    await releaseSavingsEarmark({
+      commitmentId: releaseTarget.id,
+      amountRial: rial,
+      outgoingTxn:
+        releaseMode === 'NO_TXN'
+          ? undefined
+          : {
+              type: releaseMode,
+              toAccountId: releaseMode === 'TRANSFER' ? releaseToAccId : undefined,
+              note:
+                releaseTarget.kind === 'PERSON_HOLD'
+                  ? `بازگشت امانت ${releaseTarget.personName || ''}`.trim()
+                  : releaseTarget.note || 'برداشت از ذخیره وام',
+            },
+    });
+
+    setReleaseTarget(null);
+    await loadAccounts();
+    if (savingsDetailAccount) {
+      const updated = (await getAccountsWithBalances()).find(a => a.id === savingsDetailAccount.id);
+      if (updated) {
+        await openSavingsDetail(updated);
+      }
+    }
   };
 
   const openReturnModal = (commitment?: SavingsCommitmentWithRemaining) => {
@@ -320,22 +401,50 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
                 }
               />
 
-              {/* Savings commitment banner if debt exists */}
-              {hasSavingsDebt && (
-                <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-lime/10 border border-lime/25 text-xs">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <PiggyBank size={14} className="text-lime shrink-0" />
-                    <span className="text-[11px] font-bold text-lime truncate">
-                      طلب از خود: {Money.toman(savingsInfo.remaining)} تومان
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => openSavingsDetail(acc)}
-                    className="h-6 px-2.5 rounded-lg bg-lime text-onLime text-[10px] font-extrabold active:scale-95 transition-transform shrink-0 shadow-sm"
-                  >
-                    بازگرداندن
-                  </button>
+              {/* Savings commitment & earmark banners */}
+              {acc.isSavings && savingsInfo && (hasSavingsDebt || savingsInfo.loanReserved > 0 || savingsInfo.personHold > 0) && (
+                <div className="space-y-1.5">
+                  {hasSavingsDebt && (
+                    <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-lime/10 border border-lime/25 text-xs">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <PiggyBank size={14} className="text-lime shrink-0" />
+                        <span className="text-[11px] font-bold text-lime truncate">
+                          طلب از خود: {Money.toman(savingsInfo.remaining)} تومان
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openSavingsDetail(acc)}
+                        className="h-6 px-2.5 rounded-lg bg-lime text-onLime text-[10px] font-extrabold active:scale-95 transition-transform shrink-0 shadow-sm"
+                      >
+                        بازگرداندن
+                      </button>
+                    </div>
+                  )}
+                  {(savingsInfo.loanReserved > 0 || savingsInfo.personHold > 0) && (
+                    <div
+                      onClick={() => openSavingsDetail(acc)}
+                      role="button"
+                      tabIndex={0}
+                      className="flex items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-sky/10 border border-sky/25 text-[11px] cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {savingsInfo.loanReserved > 0 && (
+                          <span className="text-sky font-bold flex items-center gap-1">
+                            <Building2 size={13} />
+                            ذخیره وام: {hidden ? '•••' : Money.toman(savingsInfo.loanReserved)} تومان
+                          </span>
+                        )}
+                        {savingsInfo.personHold > 0 && (
+                          <span className="text-warn font-bold flex items-center gap-1">
+                            <UserCheck size={13} />
+                            امانت دیگران: {hidden ? '•••' : Money.toman(savingsInfo.personHold)} تومان
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-white/70 shrink-0">جزئیات</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -747,19 +856,42 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
               {/* Balances Grid */}
               <div className="grid grid-cols-2 gap-2.5">
                 <div className="rounded-2xl bg-surface border border-line p-3">
-                  <span className="text-[11px] text-muted block">موجودی فعلی پس‌انداز</span>
+                  <span className="text-[11px] text-muted block">موجودی کل کارت</span>
                   <div className="text-base font-extrabold text-white mt-1 dir-ltr text-right">
                     {hidden ? Money.HIDDEN : Money.toman(savingsDetailAccount.balance)} <span className="text-[10px] font-normal text-muted">تومان</span>
                   </div>
                 </div>
 
                 <div className="rounded-2xl bg-lime/10 border border-lime/25 p-3">
-                  <span className="text-[11px] text-lime font-bold block">مانده قابل بازگشت (طلب از خود)</span>
+                  <span className="text-[11px] text-lime font-bold block">پس‌انداز خالص (آزاد)</span>
                   <div className="text-base font-extrabold text-lime mt-1 dir-ltr text-right">
-                    {hidden ? Money.HIDDEN : Money.toman(savingsMap[savingsDetailAccount.id!]?.remaining || 0)} <span className="text-[10px] font-normal text-lime/80">تومان</span>
+                    {hidden ? Money.HIDDEN : Money.toman(savingsDetailAccount.balance - savingsEarmarks.totalEarmarked)} <span className="text-[10px] font-normal text-lime/80">تومان</span>
                   </div>
                 </div>
               </div>
+
+              {(savingsEarmarks.loanReservedTotal > 0 || savingsEarmarks.personHoldTotal > 0 || (savingsMap[savingsDetailAccount.id!]?.remaining || 0) > 0) && (
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-surface border border-line p-2">
+                    <span className="text-[10px] text-muted block">ذخیره وام</span>
+                    <span className="text-xs font-extrabold text-sky dir-ltr block mt-0.5">
+                      {hidden ? '•••' : Money.toman(savingsEarmarks.loanReservedTotal)}
+                    </span>
+                  </div>
+                  <div className="rounded-xl bg-surface border border-line p-2">
+                    <span className="text-[10px] text-muted block">امانت دیگران</span>
+                    <span className="text-xs font-extrabold text-warn dir-ltr block mt-0.5">
+                      {hidden ? '•••' : Money.toman(savingsEarmarks.personHoldTotal)}
+                    </span>
+                  </div>
+                  <div className="rounded-xl bg-surface border border-line p-2">
+                    <span className="text-[10px] text-muted block">طلب از خود</span>
+                    <span className="text-xs font-extrabold text-lime dir-ltr block mt-0.5">
+                      {hidden ? '•••' : Money.toman(savingsMap[savingsDetailAccount.id!]?.remaining || 0)}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex gap-2">
@@ -784,6 +916,80 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
                   گردش حساب
                 </button>
               </div>
+
+              {/* Loan Reserves Section */}
+              {savingsEarmarks.loanReserves.filter(r => r.remaining > 0).length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Building2 size={14} className="text-sky" />
+                      مبالغ کنارگذاشته‌شده برای وام‌ها
+                    </span>
+                    <span className="text-[10px] text-sky font-bold">
+                      {Money.toman(savingsEarmarks.loanReservedTotal)} تومان
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {savingsEarmarks.loanReserves
+                      .filter(r => r.remaining > 0)
+                      .map(r => (
+                        <div key={r.id} className="p-3 rounded-2xl bg-surface border border-sky/25 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-white truncate">{r.note || 'ذخیره وام'}</div>
+                            <div className="text-[10px] text-muted mt-0.5">
+                              {Jalali.dayLabel(r.createdAt)} · مانده ذخیره: {Money.toman(r.remaining)} تومان
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openReleaseModal(r)}
+                            className="h-7 px-2.5 rounded-lg bg-sky/15 hover:bg-sky/25 text-sky text-[10.5px] font-bold shrink-0"
+                          >
+                            آزادسازی / برداشت
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Person Holds Section */}
+              {savingsEarmarks.personHolds.filter(p => p.remaining > 0).length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <UserCheck size={14} className="text-warn" />
+                      امانت‌ها و پول دیگران
+                    </span>
+                    <span className="text-[10px] text-warn font-bold">
+                      {Money.toman(savingsEarmarks.personHoldTotal)} تومان
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {savingsEarmarks.personHolds
+                      .filter(p => p.remaining > 0)
+                      .map(p => (
+                        <div key={p.id} className="p-3 rounded-2xl bg-surface border border-warn/25 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-white truncate">
+                              امانت {p.personName || 'شخص'}
+                            </div>
+                            <div className="text-[10px] text-muted mt-0.5">
+                              {Jalali.dayLabel(p.createdAt)} · مانده: {Money.toman(p.remaining)} تومان
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openReleaseModal(p)}
+                            className="h-7 px-2.5 rounded-lg bg-warn/15 hover:bg-warn/25 text-warn text-[10.5px] font-bold shrink-0"
+                          >
+                            بازگرداندن / تسویه
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
 
               {/* Withdrawals List with Commitments */}
               <div>
@@ -910,6 +1116,113 @@ export function Accounts({ hidden, onSelectAccount }: AccountsProps) {
               >
                 <Check size={16} />
                 ثبت بازگرداندن
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Release / Settle Earmark Modal */}
+      {releaseTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/80 backdrop-blur-sm animate-fade-in p-4">
+          <div role="dialog" aria-modal="true" aria-label="تسویه یا آزادسازی مبلغ" className="w-full max-w-sm bg-sheet rounded-[28px] border border-white/10 p-5 shadow-2xl space-y-3.5">
+            <div className="flex items-center justify-between border-b border-line pb-2.5">
+              <h2 className="text-sm font-bold text-white">
+                {releaseTarget.kind === 'PERSON_HOLD'
+                  ? `بازگرداندن / تسویه امانت ${releaseTarget.personName || ''}`
+                  : 'آزادسازی / برداشت ذخیره وام'}
+              </h2>
+              <button
+                onClick={() => setReleaseTarget(null)}
+                className="w-8 h-8 rounded-full bg-surface flex items-center justify-center text-muted hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-surface border border-line text-xs">
+              <span className="text-muted block text-[10px]">بابت:</span>
+              <span className="font-bold text-white">{releaseTarget.note || releaseTarget.personName || 'ذخیره'}</span>
+              <span className="text-sky text-[11px] block mt-0.5">
+                مانده: {Money.toman(releaseTarget.remaining)} تومان
+              </span>
+            </div>
+
+            <div>
+              <label className="text-[11px] text-muted block mb-1">نحوه تسویه / آزادسازی</label>
+              <div className="grid grid-cols-3 gap-1.5 bg-surface p-1 rounded-xl border border-line">
+                <button
+                  type="button"
+                  onClick={() => setReleaseMode('EXPENSE')}
+                  className={`py-2 rounded-lg text-[10.5px] font-bold transition-all ${
+                    releaseMode === 'EXPENSE' ? 'bg-lime text-onLime' : 'text-muted'
+                  }`}
+                >
+                  برداشت از کارت
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReleaseMode('TRANSFER')}
+                  className={`py-2 rounded-lg text-[10.5px] font-bold transition-all ${
+                    releaseMode === 'TRANSFER' ? 'bg-lime text-onLime' : 'text-muted'
+                  }`}
+                >
+                  انتقال به حساب
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReleaseMode('NO_TXN')}
+                  className={`py-2 rounded-lg text-[10.5px] font-bold transition-all ${
+                    releaseMode === 'NO_TXN' ? 'bg-lime text-onLime' : 'text-muted'
+                  }`}
+                >
+                  آزادسازی بدون تراکنش
+                </button>
+              </div>
+            </div>
+
+            {releaseMode === 'TRANSFER' && (
+              <div>
+                <label className="text-[11px] text-muted block mb-1">انتقال به حساب</label>
+                <Select
+                  value={releaseToAccId}
+                  onChange={val => setReleaseToAccId(Number(val))}
+                  options={accounts
+                    .filter((a): a is AccountWithBalance & { id: number } => a.id != null && a.id !== releaseTarget.accountId)
+                    .map(a => ({
+                      value: a.id,
+                      label: a.name,
+                    }))}
+                  placeholder="انتخاب حساب مقصد"
+                />
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="release-amount-input" className="text-[11px] text-muted block mb-1">مبلغ (تومان)</label>
+              <AmountInput
+                id="release-amount-input"
+                value={releaseAmountStr}
+                onChange={setReleaseAmountStr}
+                className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setReleaseTarget(null)}
+                className="flex-1 h-11 rounded-xl bg-surface border border-line text-xs font-bold text-muted hover:text-white"
+              >
+                انصراف
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteRelease}
+                className="flex-1 h-11 rounded-xl bg-lime text-onLime font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-fab active:scale-95 transition-transform"
+              >
+                <Check size={16} />
+                تأیید و ثبت
               </button>
             </div>
           </div>

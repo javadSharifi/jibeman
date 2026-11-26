@@ -245,7 +245,7 @@ export async function unmarkHistoricalInstallment(installmentId: number): Promis
 }
 
 export async function payLoanInstallment(installmentId: number, accountId: number): Promise<void> {
-  await db.transaction('rw', [db.loans, db.installments, db.accounts, db.txns, db.outbox], async () => {
+  await db.transaction('rw', [db.loans, db.installments, db.accounts, db.txns, db.savingsCommitments, db.savingsPayments, db.outbox], async () => {
     const installment = await db.installments.get(installmentId);
     if (!installment) throw new Error('Installment unavailable');
     if (installment.paidTxnId != null && await db.txns.get(installment.paidTxnId)) return;
@@ -265,6 +265,35 @@ export async function payLoanInstallment(installmentId: number, accountId: numbe
       createdAt: now,
     });
     await db.installments.update(installmentId, { paidTxnId });
+
+    if (account.isSavings) {
+      const instJ = Jalali.of(installment.dueAt);
+      const reserves = (await db.savingsCommitments.where('accountId').equals(accountId).toArray())
+        .filter(c => c.kind === 'LOAN_RESERVE' && c.loanId === installment.loanId && (c.paidAmount || 0) < c.amount)
+        .sort((a, b) => {
+          const aExact = a.targetYear === instJ.y && a.targetMonth === instJ.m ? 0 : 1;
+          const bExact = b.targetYear === instJ.y && b.targetMonth === instJ.m ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+          return a.createdAt - b.createdAt;
+        });
+
+      let rem = installment.amount;
+      for (const c of reserves) {
+        if (rem <= 0) break;
+        const available = c.amount - (c.paidAmount || 0);
+        const consume = Math.min(rem, available);
+        await db.savingsCommitments.update(c.id!, {
+          paidAmount: (c.paidAmount || 0) + consume,
+        });
+        await db.savingsPayments.add({
+          commitmentId: c.id!,
+          amount: consume,
+          at: now,
+          txnId: paidTxnId,
+        });
+        rem -= consume;
+      }
+    }
   });
 }
 
@@ -284,7 +313,7 @@ export async function deleteTxnWithInstallmentLink(txnId: number): Promise<void>
       await db.savingsPayments.delete(p.id!);
     }
 
-    // If it was a withdrawal transaction, delete the commitment and its payments
+    // If it was a withdrawal or earmarked deposit transaction, delete the commitment and its payments
     const commitments = await db.savingsCommitments.where('txnId').equals(txnId).toArray();
     for (const c of commitments) {
       await db.savingsPayments.where('commitmentId').equals(c.id!).delete();
@@ -299,8 +328,13 @@ export interface SavingsCommitmentWithRemaining extends SavingsCommitment {
   remaining: number;
 }
 
+export function isWithdrawalCommitment(c: Pick<SavingsCommitment, 'kind'>): boolean {
+  return !c.kind || c.kind === 'WITHDRAWAL';
+}
+
 export async function getSavingsCommitments(accountId: number): Promise<SavingsCommitmentWithRemaining[]> {
-  const commitments = await db.savingsCommitments.where('accountId').equals(accountId).reverse().sortBy('createdAt');
+  const commitments = (await db.savingsCommitments.where('accountId').equals(accountId).reverse().sortBy('createdAt'))
+    .filter(isWithdrawalCommitment);
   return commitments.map(c => ({
     ...c,
     remaining: Math.max(0, c.amount - (c.paidAmount || 0)),
@@ -308,7 +342,8 @@ export async function getSavingsCommitments(accountId: number): Promise<SavingsC
 }
 
 export async function getSavingsReturnableBalance(accountId: number): Promise<number> {
-  const commitments = await db.savingsCommitments.where('accountId').equals(accountId).toArray();
+  const commitments = (await db.savingsCommitments.where('accountId').equals(accountId).toArray())
+    .filter(isWithdrawalCommitment);
   return commitments.reduce((acc, c) => acc + Math.max(0, c.amount - (c.paidAmount || 0)), 0);
 }
 
@@ -336,7 +371,7 @@ export async function returnToSavings(options: {
 
     if (commitmentId) {
       const c = await db.savingsCommitments.get(commitmentId);
-      if (c) {
+      if (c && isWithdrawalCommitment(c)) {
         await db.savingsCommitments.update(commitmentId, {
           paidAmount: (c.paidAmount || 0) + amount,
         });
@@ -350,7 +385,7 @@ export async function returnToSavings(options: {
     } else {
       let rem = amount;
       const all = await db.savingsCommitments.where('accountId').equals(savingsAccountId).sortBy('createdAt');
-      const open = all.filter(c => (c.paidAmount || 0) < c.amount);
+      const open = all.filter(c => isWithdrawalCommitment(c) && (c.paidAmount || 0) < c.amount);
       for (const c of open) {
         if (rem <= 0) break;
         const needed = c.amount - (c.paidAmount || 0);
@@ -369,4 +404,259 @@ export async function returnToSavings(options: {
     }
   });
   return txnId;
+}
+
+export interface LoanReserveTarget {
+  loanId: number;
+  loanTitle: string;
+  lender?: string;
+  targetYear: number;
+  targetMonth: number;
+  inCurrentMonth: boolean;
+  installmentCount: number;
+  dueAmount: number; // rial (unpaid installments in target month, or next unpaid)
+  reservedAmount: number; // rial already reserved for this loan & target month
+  neededAmount: number; // max(0, dueAmount - reservedAmount)
+  nextDueAt: number;
+}
+
+export async function getLoanReserveTargets(year: number, month: number): Promise<LoanReserveTarget[]> {
+  const [monthStart, monthEnd] = Jalali.monthRange(year, month);
+  const [allLoans, allInsts, allCommitments, allAccs] = await Promise.all([
+    db.loans.toArray(),
+    db.installments.toArray(),
+    db.savingsCommitments.toArray(),
+    db.accounts.toArray(),
+  ]);
+
+  const activeSavingsIds = new Set(
+    allAccs.filter(a => !a.archived && a.isSavings && a.id != null).map(a => a.id!)
+  );
+  const isInstPaid = (i: Installment) => i.paidTxnId != null || i.paidAt != null;
+
+  const reservedFor = (loanId: number, y: number, m: number) =>
+    allCommitments
+      .filter(
+        c =>
+          c.kind === 'LOAN_RESERVE' &&
+          activeSavingsIds.has(c.accountId) &&
+          c.loanId === loanId &&
+          c.targetYear === y &&
+          c.targetMonth === m
+      )
+      .reduce((sum, c) => sum + Math.max(0, c.amount - (c.paidAmount || 0)), 0);
+
+  const targets: LoanReserveTarget[] = [];
+
+  for (const loan of allLoans) {
+    if (loan.id == null) continue;
+    const unpaid = allInsts
+      .filter(i => i.loanId === loan.id && !isInstPaid(i))
+      .sort((a, b) => a.dueAt - b.dueAt);
+    if (unpaid.length === 0) continue;
+
+    const thisMonthUnpaid = unpaid.filter(i => i.dueAt >= monthStart && i.dueAt < monthEnd);
+    if (thisMonthUnpaid.length > 0) {
+      const dueAmount = thisMonthUnpaid.reduce((sum, i) => sum + i.amount, 0);
+      const reservedAmount = reservedFor(loan.id, year, month);
+      targets.push({
+        loanId: loan.id,
+        loanTitle: loan.title,
+        lender: loan.lender,
+        targetYear: year,
+        targetMonth: month,
+        inCurrentMonth: true,
+        installmentCount: thisMonthUnpaid.length,
+        dueAmount,
+        reservedAmount,
+        neededAmount: Math.max(0, dueAmount - reservedAmount),
+        nextDueAt: thisMonthUnpaid[0].dueAt,
+      });
+    } else {
+      const next = unpaid[0];
+      const nextJ = Jalali.of(next.dueAt);
+      const sameMonthUnpaid = unpaid.filter(i => {
+        const ij = Jalali.of(i.dueAt);
+        return ij.y === nextJ.y && ij.m === nextJ.m;
+      });
+      const dueAmount = sameMonthUnpaid.reduce((sum, i) => sum + i.amount, 0);
+      const reservedAmount = reservedFor(loan.id, nextJ.y, nextJ.m);
+      targets.push({
+        loanId: loan.id,
+        loanTitle: loan.title,
+        lender: loan.lender,
+        targetYear: nextJ.y,
+        targetMonth: nextJ.m,
+        inCurrentMonth: false,
+        installmentCount: sameMonthUnpaid.length,
+        dueAmount,
+        reservedAmount,
+        neededAmount: Math.max(0, dueAmount - reservedAmount),
+        nextDueAt: next.dueAt,
+      });
+    }
+  }
+
+  return targets.sort((a, b) => {
+    if (a.inCurrentMonth !== b.inCurrentMonth) return a.inCurrentMonth ? -1 : 1;
+    return a.nextDueAt - b.nextDueAt;
+  });
+}
+
+export interface SavingsAccountEarmarks {
+  loanReserves: SavingsCommitmentWithRemaining[];
+  personHolds: SavingsCommitmentWithRemaining[];
+  loanReservedTotal: number;
+  personHoldTotal: number;
+  totalEarmarked: number;
+}
+
+export async function getSavingsAccountEarmarks(accountId?: number): Promise<SavingsAccountEarmarks> {
+  const rows = accountId != null
+    ? await db.savingsCommitments.where('accountId').equals(accountId).reverse().sortBy('createdAt')
+    : await db.savingsCommitments.reverse().sortBy('createdAt');
+
+  const activeSavingsIds = accountId != null
+    ? new Set([accountId])
+    : new Set((await db.accounts.filter(a => !a.archived && Boolean(a.isSavings)).toArray()).map(a => a.id!));
+
+  const loanReserves: SavingsCommitmentWithRemaining[] = [];
+  const personHolds: SavingsCommitmentWithRemaining[] = [];
+
+  for (const r of rows) {
+    if (!activeSavingsIds.has(r.accountId)) continue;
+    const remaining = Math.max(0, r.amount - (r.paidAmount || 0));
+    if (r.kind === 'LOAN_RESERVE') {
+      loanReserves.push({ ...r, remaining });
+    } else if (r.kind === 'PERSON_HOLD') {
+      personHolds.push({ ...r, remaining });
+    }
+  }
+
+  const loanReservedTotal = loanReserves.reduce((s, r) => s + r.remaining, 0);
+  const personHoldTotal = personHolds.reduce((s, r) => s + r.remaining, 0);
+
+  return {
+    loanReserves,
+    personHolds,
+    loanReservedTotal,
+    personHoldTotal,
+    totalEarmarked: loanReservedTotal + personHoldTotal,
+  };
+}
+
+export type DepositPurpose = 'SAVINGS' | 'LOAN_RESERVE' | 'PERSON_HOLD';
+
+export interface LoanAllocationInput {
+  loanId: number;
+  loanTitle: string;
+  targetYear: number;
+  targetMonth: number;
+  amountRial: number;
+}
+
+export interface SavingsDepositAllocation {
+  purpose: DepositPurpose;
+  personName: string;
+  personId?: number;
+  note?: string;
+  loanAllocations: LoanAllocationInput[];
+}
+
+export async function saveSavingsDepositAllocations(options: {
+  accountId: number;
+  txnId: number;
+  amountRial: number;
+  allocation: SavingsDepositAllocation;
+  now?: number;
+}): Promise<void> {
+  const { accountId, txnId, amountRial, allocation } = options;
+  const now = options.now ?? Date.now();
+  if (allocation.purpose === 'SAVINGS' || amountRial <= 0) return;
+
+  await db.transaction('rw', [db.savingsCommitments, db.outbox], async () => {
+    if (allocation.purpose === 'PERSON_HOLD') {
+      const cleanName = allocation.personName.trim();
+      if (!cleanName) return;
+      await db.savingsCommitments.add({
+        accountId,
+        txnId,
+        amount: amountRial,
+        paidAmount: 0,
+        kind: 'PERSON_HOLD',
+        personId: allocation.personId,
+        personName: cleanName,
+        note: allocation.note?.trim() || `امانت ${cleanName}`,
+        createdAt: now,
+      });
+      return;
+    }
+
+    if (allocation.purpose === 'LOAN_RESERVE') {
+      const validItems = allocation.loanAllocations.filter(item => item.amountRial > 0);
+      if (validItems.length === 0) return;
+      await db.savingsCommitments.bulkAdd(
+        validItems.map(item => ({
+          accountId,
+          txnId,
+          amount: item.amountRial,
+          paidAmount: 0,
+          kind: 'LOAN_RESERVE' as const,
+          loanId: item.loanId,
+          targetYear: item.targetYear,
+          targetMonth: item.targetMonth,
+          note: `ذخیره وام · ${item.loanTitle} (${Jalali.monthTitle(item.targetYear, item.targetMonth)})`,
+          createdAt: now,
+        }))
+      );
+    }
+  });
+}
+
+export async function releaseSavingsEarmark(options: {
+  commitmentId: number;
+  amountRial?: number;
+  outgoingTxn?: {
+    type: 'EXPENSE' | 'TRANSFER';
+    toAccountId?: number;
+    note?: string;
+  };
+}): Promise<void> {
+  const { commitmentId, amountRial, outgoingTxn } = options;
+  await db.transaction('rw', [db.savingsCommitments, db.savingsPayments, db.txns, db.outbox], async () => {
+    const c = await db.savingsCommitments.get(commitmentId);
+    if (!c) return;
+    const available = Math.max(0, c.amount - (c.paidAmount || 0));
+    if (available <= 0) return;
+    const releaseAmt = amountRial != null ? Math.min(available, Math.max(0, amountRial)) : available;
+    if (releaseAmt <= 0) return;
+
+    const now = Date.now();
+    let txnId: number | undefined;
+    if (outgoingTxn) {
+      txnId = await db.txns.add({
+        type: outgoingTxn.type,
+        amount: releaseAmt,
+        accountId: c.accountId,
+        toAccountId: outgoingTxn.type === 'TRANSFER' ? outgoingTxn.toAccountId : undefined,
+        title: outgoingTxn.note || c.note || (c.kind === 'PERSON_HOLD' ? `بازگشت امانت ${c.personName || ''}` : 'برداشت ذخیره وام'),
+        occurredAt: now,
+        source: 'MANUAL',
+        createdAt: now,
+      });
+    }
+
+    await db.savingsCommitments.update(commitmentId, {
+      paidAmount: (c.paidAmount || 0) + releaseAmt,
+    });
+
+    if (txnId != null) {
+      await db.savingsPayments.add({
+        commitmentId,
+        amount: releaseAmt,
+        at: now,
+        txnId,
+      });
+    }
+  });
 }

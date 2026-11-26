@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Eye,
   EyeOff,
@@ -25,6 +26,8 @@ import {
   getAccountsWithBalances,
   getTxnsWithDetails,
   getMonthTotals,
+  getSavingsAccountEarmarks,
+  getLoanReserveTargets,
   type AccountWithBalance,
   type TxnWithDetails,
 } from '../core/db/helpers';
@@ -34,6 +37,8 @@ import { ActionPill } from '../components/UI';
 
 interface MonthObligations {
   loanTotal: number;
+  loanReservedTotal: number;
+  loanCoveragePct: number;
   debtTotal: number;
   total: number;
   loans: {
@@ -42,6 +47,8 @@ interface MonthObligations {
     installmentN: number;
     amount: number;
     dueAt: number;
+    loanReservedForMonth: number;
+    loanDueForMonth: number;
   }[];
   debts: {
     id: number;
@@ -71,96 +78,121 @@ export function Home({
   onOpenAccountDetail,
   onNavigateSubRoute,
 }: HomeProps) {
-  const [accounts, setAccounts] = useState<AccountWithBalance[]>([]);
-  const [recentTxns, setRecentTxns] = useState<TxnWithDetails[]>([]);
-  const [totals, setTotals] = useState({ income: 0, expense: 0 });
-  const [obligations, setObligations] = useState<MonthObligations>({
-    loanTotal: 0,
-    debtTotal: 0,
-    total: 0,
-    loans: [],
-    debts: [],
-  });
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   const now = Date.now();
   const currentJ = Jalali.of(now);
 
-  const loadData = async () => {
-    const [monthStart, monthEnd] = Jalali.monthRange(currentJ.y, currentJ.m);
+  const { accounts, recentTxns, totals, obligations, savingsEarmarkedRial } = useLiveQuery(
+    async () => {
+      const [monthStart, monthEnd] = Jalali.monthRange(currentJ.y, currentJ.m);
 
-    const [accs, txs, tots, allLoans, allInsts, allDebts, allPmts] = await Promise.all([
-      getAccountsWithBalances(),
-      getTxnsWithDetails({ limit: 5 }),
-      getMonthTotals(currentJ.y, currentJ.m),
-      db.loans.toArray(),
-      db.installments.toArray(),
-      db.debts.toArray(),
-      db.debtPayments.toArray(),
-    ]);
+      const [accs, txs, tots, allLoans, allInsts, allDebts, allPmts, earmarks, loanTargets] = await Promise.all([
+        getAccountsWithBalances(),
+        getTxnsWithDetails({ limit: 5 }),
+        getMonthTotals(currentJ.y, currentJ.m),
+        db.loans.toArray(),
+        db.installments.toArray(),
+        db.debts.toArray(),
+        db.debtPayments.toArray(),
+        getSavingsAccountEarmarks(),
+        getLoanReserveTargets(currentJ.y, currentJ.m),
+      ]);
 
-    const loansMap = new Map(allLoans.map((l) => [l.id, l.title]));
-    const isInstPaid = (i: { paidTxnId?: number; paidAt?: number }) => i.paidTxnId != null || i.paidAt != null;
+      const loansMap = new Map(allLoans.map((l) => [l.id, l.title]));
+      const monthLoanTargetMap = new Map(
+        loanTargets.filter(t => t.inCurrentMonth).map(t => [t.loanId, t])
+      );
+      const isInstPaid = (i: { paidTxnId?: number; paidAt?: number }) => i.paidTxnId != null || i.paidAt != null;
 
-    // 1. Unpaid installments due in current Jalali month
-    const monthInstallments = allInsts
-      .filter((i) => !isInstPaid(i) && i.dueAt >= monthStart && i.dueAt < monthEnd)
-      .sort((a, b) => a.dueAt - b.dueAt)
-      .map((i) => ({
-        loanId: i.loanId,
-        loanTitle: loansMap.get(i.loanId) || 'وام',
-        installmentN: i.n,
-        amount: i.amount,
-        dueAt: i.dueAt,
-      }));
+      // 1. Unpaid installments due in current Jalali month
+      const monthInstallments = allInsts
+        .filter((i) => !isInstPaid(i) && i.dueAt >= monthStart && i.dueAt < monthEnd)
+        .sort((a, b) => a.dueAt - b.dueAt)
+        .map((i) => {
+          const target = monthLoanTargetMap.get(i.loanId);
+          return {
+            loanId: i.loanId,
+            loanTitle: loansMap.get(i.loanId) || 'وام',
+            installmentN: i.n,
+            amount: i.amount,
+            dueAt: i.dueAt,
+            loanReservedForMonth: target?.reservedAmount ?? 0,
+            loanDueForMonth: target?.dueAmount ?? i.amount,
+          };
+        });
 
-    const loanTotal = monthInstallments.reduce((sum, i) => sum + i.amount, 0);
+      const loanTotal = monthInstallments.reduce((sum, i) => sum + i.amount, 0);
+      const loanReservedTotal = Array.from(monthLoanTargetMap.values()).reduce(
+        (sum, t) => sum + Math.min(t.dueAmount, t.reservedAmount),
+        0
+      );
+      const loanCoveragePct = loanTotal > 0 ? Math.min(100, Math.round((loanReservedTotal / loanTotal) * 100)) : 0;
 
-    // 2. Debts (I_OWE) with dueAt in current Jalali month
-    const monthDebts = allDebts
-      .filter(
-        (d) =>
-          d.direction === 'I_OWE' &&
-          d.dueAt != null &&
-          d.dueAt >= monthStart &&
-          d.dueAt < monthEnd
-      )
-      .map((d) => {
-        const paid = allPmts
-          .filter((p) => p.debtId === d.id)
-          .reduce((sum, p) => sum + p.amount, 0);
-        const remaining = Math.max(0, d.amount - paid);
-        return {
-          id: d.id!,
-          person: d.person,
-          amount: d.amount,
-          remaining,
-          dueAt: d.dueAt!,
-        };
-      })
-      .filter((d) => d.remaining > 0)
-      .sort((a, b) => a.dueAt - b.dueAt);
+      // 2. Debts (I_OWE) with dueAt in current Jalali month
+      const monthDebts = allDebts
+        .filter(
+          (d) =>
+            d.direction === 'I_OWE' &&
+            d.dueAt != null &&
+            d.dueAt >= monthStart &&
+            d.dueAt < monthEnd
+        )
+        .map((d) => {
+          const paid = allPmts
+            .filter((p) => p.debtId === d.id)
+            .reduce((sum, p) => sum + p.amount, 0);
+          const remaining = Math.max(0, d.amount - paid);
+          return {
+            id: d.id!,
+            person: d.person,
+            amount: d.amount,
+            remaining,
+            dueAt: d.dueAt!,
+          };
+        })
+        .filter((d) => d.remaining > 0)
+        .sort((a, b) => a.dueAt - b.dueAt);
 
-    const debtTotal = monthDebts.reduce((sum, d) => sum + d.remaining, 0);
+      const debtTotal = monthDebts.reduce((sum, d) => sum + d.remaining, 0);
 
-    setAccounts(accs);
-    setRecentTxns(txs);
-    setTotals(tots);
-    setObligations({
-      loanTotal,
-      debtTotal,
-      total: loanTotal + debtTotal,
-      loans: monthInstallments,
-      debts: monthDebts,
-    });
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
+      return {
+        accounts: accs,
+        recentTxns: txs,
+        totals: tots,
+        savingsEarmarkedRial: earmarks.totalEarmarked,
+        obligations: {
+          loanTotal,
+          loanReservedTotal,
+          loanCoveragePct,
+          debtTotal,
+          total: loanTotal + debtTotal,
+          loans: monthInstallments,
+          debts: monthDebts,
+        } satisfies MonthObligations,
+      };
+    },
+    [currentJ.y, currentJ.m],
+    {
+      accounts: [] as AccountWithBalance[],
+      recentTxns: [] as TxnWithDetails[],
+      totals: { income: 0, expense: 0 },
+      savingsEarmarkedRial: 0,
+      obligations: {
+        loanTotal: 0,
+        loanReservedTotal: 0,
+        loanCoveragePct: 0,
+        debtTotal: 0,
+        total: 0,
+        loans: [],
+        debts: [],
+      } as MonthObligations,
+    }
+  );
 
   const spendableBalanceRial = accounts.filter(a => !a.isSavings).reduce((acc, a) => acc + a.balance, 0);
   const savingsBalanceRial = accounts.filter(a => a.isSavings).reduce((acc, a) => acc + a.balance, 0);
+  const netSavingsRial = savingsBalanceRial - savingsEarmarkedRial;
   const netMonth = totals.income - totals.expense;
 
   return (
@@ -226,18 +258,22 @@ export function Home({
           tabIndex={0}
           className="mt-3.5 bg-white/10 hover:bg-white/15 backdrop-blur-md rounded-2xl px-4 py-2.5 border border-white/10 flex items-center justify-between cursor-pointer transition-colors"
         >
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-lime/20 flex items-center justify-center text-lime">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-lime/20 flex items-center justify-center text-lime shrink-0">
               <PiggyBank size={16} />
             </div>
-            <div>
-              <div className="text-xs font-bold text-white">کل پس‌انداز</div>
-              <div className="text-[10px] text-white/60">تفکیک‌شده از موجودی قابل‌خرج</div>
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-white">کل پس‌انداز خالص</div>
+              <div className="text-[10px] text-white/60 truncate">
+                {savingsEarmarkedRial > 0
+                  ? `کل کارت‌ها: ${hidden ? '•••' : Money.toman(savingsBalanceRial)} (کسر ${hidden ? '•••' : Money.toman(savingsEarmarkedRial)} وام/امانت)`
+                  : 'تفکیک‌شده از موجودی قابل‌خرج'}
+              </div>
             </div>
           </div>
-          <div className="flex items-baseline gap-1 dir-ltr">
+          <div className="flex items-baseline gap-1 dir-ltr shrink-0">
             <span className="text-base font-extrabold text-lime tracking-tight">
-              {hidden ? Money.HIDDEN : Money.toman(savingsBalanceRial)}
+              {hidden ? Money.HIDDEN : Money.toman(netSavingsRial)}
             </span>
             <span className="text-[10px] text-white/70">تومان</span>
           </div>
@@ -368,9 +404,9 @@ export function Home({
               onClick={() => (onNavigateSubRoute ? onNavigateSubRoute('loans') : onNavigateTab(3))}
               role="button"
               tabIndex={0}
-              className="p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-line/60 cursor-pointer transition-colors"
+              className="p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-line/60 cursor-pointer transition-colors space-y-1.5"
             >
-              <div className="flex items-center justify-between text-[11px] text-muted mb-1">
+              <div className="flex items-center justify-between text-[11px] text-muted">
                 <span className="flex items-center gap-1.5 text-white/90 font-medium">
                   <Building2 size={13} className="text-sky" />
                   اقساط وام
@@ -383,6 +419,21 @@ export function Home({
                 {hidden ? Money.HIDDEN : Money.toman(obligations.loanTotal)}{' '}
                 <span className="text-[9px] text-muted font-normal">تومان</span>
               </div>
+              {obligations.loanTotal > 0 && obligations.loanReservedTotal > 0 && (
+                <div className="space-y-1 pt-0.5">
+                  <div className="h-1 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${obligations.loanCoveragePct >= 100 ? 'bg-ok' : 'bg-sky'}`}
+                      style={{ width: `${obligations.loanCoveragePct}%` }}
+                    />
+                  </div>
+                  <div className={`text-[9.5px] font-bold ${obligations.loanCoveragePct >= 100 ? 'text-ok' : 'text-sky'}`}>
+                    {obligations.loanCoveragePct >= 100
+                      ? '۱۰۰٪ در پس‌انداز آماده ✓'
+                      : `${Money.fa(String(obligations.loanCoveragePct))}٪ تأمین‌شده (${hidden ? '•••' : Money.toman(obligations.loanReservedTotal)})`}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Debts summary */}
@@ -411,27 +462,39 @@ export function Home({
           {/* List of upcoming items this month */}
           {obligations.loans.length > 0 || obligations.debts.length > 0 ? (
             <div className="space-y-1.5 pt-1 border-t border-line/40">
-              {obligations.loans.map((item) => (
-                <div
-                  key={`loan-${item.loanId}-${item.installmentN}`}
-                  onClick={() => (onNavigateSubRoute ? onNavigateSubRoute('loans') : onNavigateTab(3))}
-                  className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] cursor-pointer text-xs transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-sky" />
-                    <div>
-                      <div className="text-white font-medium">
-                        {item.loanTitle} · قسط {Money.fa(String(item.installmentN))}
+              {obligations.loans.map((item) => {
+                const loanPct = item.loanDueForMonth > 0
+                  ? Math.min(100, Math.round((item.loanReservedForMonth / item.loanDueForMonth) * 100))
+                  : 0;
+                return (
+                  <div
+                    key={`loan-${item.loanId}-${item.installmentN}`}
+                    onClick={() => (onNavigateSubRoute ? onNavigateSubRoute('loans') : onNavigateTab(3))}
+                    className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] cursor-pointer text-xs transition-colors"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${loanPct >= 100 ? 'bg-ok' : 'bg-sky'}`} />
+                      <div className="min-w-0">
+                        <div className="text-white font-medium truncate">
+                          {item.loanTitle} · قسط {Money.fa(String(item.installmentN))}
+                        </div>
+                        <div className="text-[10px] text-muted flex items-center gap-1.5 flex-wrap">
+                          <span>سررسید: {Jalali.longDate(item.dueAt)}</span>
+                          {item.loanReservedForMonth > 0 && (
+                            <span className={loanPct >= 100 ? 'text-ok font-bold' : 'text-sky font-semibold'}>
+                              · {loanPct >= 100 ? 'ذخیره‌شده ۱۰۰٪ ✓' : `ذخیره ${Money.fa(String(loanPct))}٪`}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-[10px] text-muted">سررسید: {Jalali.shortDateTime(item.dueAt)}</div>
+                    </div>
+                    <div className="text-left dir-ltr font-bold text-white shrink-0">
+                      {hidden ? '•••' : Money.toman(item.amount)}{' '}
+                      <span className="text-[9px] text-muted font-normal">تومان</span>
                     </div>
                   </div>
-                  <div className="text-left dir-ltr font-bold text-white">
-                    {hidden ? '•••' : Money.toman(item.amount)}{' '}
-                    <span className="text-[9px] text-muted font-normal">تومان</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
 
               {obligations.debts.map((item) => (
                 <div
@@ -443,7 +506,7 @@ export function Home({
                     <div className="w-1.5 h-1.5 rounded-full bg-warn" />
                     <div>
                       <div className="text-white font-medium">بدهی به {item.person}</div>
-                      <div className="text-[10px] text-muted">سررسید: {Jalali.shortDateTime(item.dueAt)}</div>
+                      <div className="text-[10px] text-muted">سررسید: {Jalali.longDate(item.dueAt)}</div>
                     </div>
                   </div>
                   <div className="text-left dir-ltr font-bold text-white">
