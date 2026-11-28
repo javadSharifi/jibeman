@@ -70,6 +70,7 @@ object Ic {
     val scale by lazy { v("M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0zM8 21h8") }
     val sun by lazy { v(circle(12f, 12f, 4f), "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41") }
     val moon by lazy { v("M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z") }
+    val pieChart by lazy { v("M21.21 15.89A10 10 0 1 1 8 2.83", "M22 12A10 10 0 0 0 12 2v10z") }
 
     // category icons
     val car by lazy { v("M5 17H3v-5l2-5h14l2 5v5h-2M9 17h6M3 12h18", circle(7f, 17f, 2f), circle(17f, 17f, 2f)) }

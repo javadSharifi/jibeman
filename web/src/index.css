@@ -97,11 +97,22 @@
   }
 
   .animate-slide-down {
-    animation: slideDown 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: slideDown 0.28s cubic-bezier(0.23, 1, 0.32, 1) forwards;
   }
 
   .animate-fade-in {
-    animation: fadeIn 0.2s ease-out forwards;
+    animation: fadeIn 0.2s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+  }
+
+  .animate-modal-in {
+    animation: modalIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-down,
+  .animate-modal-in {
+    animation: fadeIn 0.15s ease-out forwards;
   }
 }
 
@@ -122,5 +133,16 @@
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }

@@ -188,3 +188,63 @@ class SecurityTest {
         assertEquals(false, storedHash == hash("1235", salt))
     }
 }
+
+class MonthlyReportsTest {
+    @Test fun aggregatesCategoriesAndAccountsAndDelta() {
+        val acc1 = ir.jibeman.core.db.AccountBalance(
+            account = ir.jibeman.core.db.Account(id = 1L, name = "بلو", type = "BANK", bankCode = "blu"),
+            balance = 5_000_000L,
+            last4 = "1234",
+        )
+        val acc2 = ir.jibeman.core.db.AccountBalance(
+            account = ir.jibeman.core.db.Account(id = 2L, name = "ملت", type = "BANK", bankCode = "mellat"),
+            balance = 2_000_000L,
+            last4 = "5678",
+        )
+        val t1 = ir.jibeman.core.db.TxnRow(
+            txn = ir.jibeman.core.db.Txn(id = 10L, type = ir.jibeman.core.db.TxType.EXPENSE, amount = 600_000L, accountId = 1L, categoryId = 1L, occurredAt = 1000L),
+            accountName = "بلو", toAccountName = null, categoryName = "خوراک", categoryIcon = "food", categoryColor = 1,
+        )
+        val t2 = ir.jibeman.core.db.TxnRow(
+            txn = ir.jibeman.core.db.Txn(id = 11L, type = ir.jibeman.core.db.TxType.EXPENSE, amount = 300_000L, accountId = 2L, categoryId = 2L, occurredAt = 2000L),
+            accountName = "ملت", toAccountName = null, categoryName = "حمل‌ونقل", categoryIcon = "car", categoryColor = 0,
+        )
+        val t3 = ir.jibeman.core.db.TxnRow(
+            txn = ir.jibeman.core.db.Txn(id = 12L, type = ir.jibeman.core.db.TxType.EXPENSE, amount = 100_000L, accountId = 1L, categoryId = null, occurredAt = 3000L),
+            accountName = "بلو", toAccountName = null, categoryName = null, categoryIcon = null, categoryColor = null,
+        )
+
+        val all = ir.jibeman.feature.MonthlyReports.build(
+            y = 1405, m = 8, accountId = 0L,
+            monthExpenses = listOf(t1, t2, t3),
+            monthTotals = ir.jibeman.core.db.Totals(income = 2_000_000L, expense = 1_000_000L, count = 4),
+            prevTotals = ir.jibeman.core.db.Totals(income = 0L, expense = 800_000L, count = 2),
+            accounts = listOf(acc1, acc2),
+            now = Jalali.millis(1405, 8, 10),
+        )
+        assertEquals(1_000_000L, all.totalExpense)
+        assertEquals(3, all.expenseCount)
+        assertEquals(25, all.deltaPercent)
+        assertEquals(100_000L, all.dailyAverage)
+        assertEquals(3, all.categories.size)
+        assertEquals("خوراک", all.categories[0].name)
+        assertEquals(60f, all.categories[0].percent, 0.01f)
+        assertEquals("بدون دسته", all.categories[2].name)
+        assertEquals(2, all.accountShares.size)
+        assertEquals(700_000L, all.accountShares[0].totalAmount)
+
+        val perCard = ir.jibeman.feature.MonthlyReports.build(
+            y = 1405, m = 8, accountId = 1L,
+            monthExpenses = listOf(t1, t2, t3),
+            monthTotals = ir.jibeman.core.db.Totals(income = 0L, expense = 700_000L, count = 2),
+            prevTotals = ir.jibeman.core.db.Totals(income = 0L, expense = 0L, count = 0),
+            accounts = listOf(acc1, acc2),
+            now = Jalali.millis(1405, 8, 10),
+        )
+        assertEquals(700_000L, perCard.totalExpense)
+        assertEquals(2, perCard.expenseCount)
+        assertEquals(null, perCard.deltaPercent)
+        assertEquals(0, perCard.accountShares.size)
+        assertEquals(2, perCard.categories.size)
+    }
+}

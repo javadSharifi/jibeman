@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { seedInitialDataIfNeeded } from './core/db';
 import { startSync } from './core/sync';
 import { Dock } from './components/Dock';
-import { QuickAdd } from './components/QuickAdd';
+import { QuickAdd, type QuickAddType } from './components/QuickAdd';
 import { SmartPaste } from './components/SmartPaste';
 
 // Pages
@@ -21,6 +21,8 @@ import { Rules } from './pages/Rules';
 import { Security } from './pages/Security';
 import { ShoppingCompare } from './pages/ShoppingCompare';
 import { ImpulseBrakeDashboard } from './pages/ImpulseBrakeDashboard';
+import { Investments } from './pages/Investments';
+import { MonthlyReport } from './pages/MonthlyReport';
 import { ActiveBrakeBanner } from './components/impulse/ActiveBrakeBanner';
 import { ImpulseBrakeModal } from './components/impulse/ImpulseBrakeModal';
 import { LockScreen } from './components/LockScreen';
@@ -31,10 +33,12 @@ export function App() {
   const [activeTab, setActiveTab] = useState(0);
   const [subRoute, setSubRoute] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<number | undefined>();
+  const [reportAccountId, setReportAccountId] = useState<number | undefined>();
 
   // Modals
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
-  const [quickAddType, setQuickAddType] = useState<'EXPENSE' | 'INCOME' | 'TRANSFER'>('EXPENSE');
+  const [quickAddType, setQuickAddType] = useState<QuickAddType>('EXPENSE');
+  const [quickAddAccountId, setQuickAddAccountId] = useState<number | undefined>();
   const [isSmartPasteOpen, setIsSmartPasteOpen] = useState(false);
 
   // Hidden privacy toggle
@@ -87,20 +91,27 @@ export function App() {
     };
   }, []);
 
-  const handleOpenQuickAdd = (type: 'EXPENSE' | 'INCOME' | 'TRANSFER' = 'EXPENSE') => {
+  const handleOpenQuickAdd = (type: QuickAddType = 'EXPENSE', accountId?: number) => {
     setQuickAddType(type);
+    setQuickAddAccountId(accountId);
     setIsQuickAddOpen(true);
   };
 
   const handleTabChange = (tab: number) => {
     setSubRoute(null);
     setSelectedAccountId(undefined);
+    setReportAccountId(undefined);
     setActiveTab(tab);
   };
 
   const handleSelectAccount = (id: number) => {
     setSelectedAccountId(id);
     setActiveTab(1); // switch to transactions filtered by this account
+  };
+
+  const handleOpenMonthlyReport = (accountId?: number) => {
+    setReportAccountId(accountId);
+    setSubRoute('report');
   };
 
   const renderContent = () => {
@@ -115,6 +126,22 @@ export function App() {
     if (subRoute === 'security') return <Security onBack={() => setSubRoute(null)} />;
     if (subRoute === 'compare') return <ShoppingCompare onBack={() => setSubRoute(null)} hidden={hidden} />;
     if (subRoute === 'impulse') return <ImpulseBrakeDashboard onBack={() => setSubRoute(null)} hidden={hidden} />;
+    if (subRoute === 'investments') return <Investments onBack={() => setSubRoute(null)} hidden={hidden} />;
+    if (subRoute === 'report') {
+      return (
+        <MonthlyReport
+          hidden={hidden}
+          onToggleHidden={toggleHidden}
+          initialAccountId={reportAccountId}
+          onBack={() => setSubRoute(null)}
+          onOpenTransactions={(accId) => {
+            setSubRoute(null);
+            setSelectedAccountId(accId);
+            setActiveTab(1);
+          }}
+        />
+      );
+    }
 
     switch (activeTab) {
       case 0:
@@ -126,13 +153,21 @@ export function App() {
             onOpenSmartPaste={() => setIsSmartPasteOpen(true)}
             onNavigateTab={handleTabChange}
             onOpenAccountDetail={handleSelectAccount}
+            onOpenMonthlyReport={handleOpenMonthlyReport}
             onNavigateSubRoute={(r) => setSubRoute(r)}
           />
         );
       case 1:
         return <Transactions hidden={hidden} initialAccountId={selectedAccountId} />;
       case 2:
-        return <Accounts hidden={hidden} onSelectAccount={handleSelectAccount} />;
+        return (
+          <Accounts
+            hidden={hidden}
+            onSelectAccount={handleSelectAccount}
+            onQuickAddForAccount={(accountId, type = 'INCOME') => handleOpenQuickAdd(type, accountId)}
+            onOpenMonthlyReport={handleOpenMonthlyReport}
+          />
+        );
       case 3:
         return <More onNavigate={(r) => setSubRoute(r)} />;
       default:
@@ -187,7 +222,11 @@ export function App() {
       <QuickAdd
         isOpen={isQuickAddOpen}
         defaultType={quickAddType}
-        onClose={() => setIsQuickAddOpen(false)}
+        defaultAccountId={quickAddAccountId}
+        onClose={() => {
+          setIsQuickAddOpen(false);
+          setQuickAddAccountId(undefined);
+        }}
         onSuccess={() => {
           // Trigger re-render of current view
           setActiveTab(t => t);

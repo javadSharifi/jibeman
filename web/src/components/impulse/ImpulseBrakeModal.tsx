@@ -33,6 +33,11 @@ import {
   type Account,
   type Category,
 } from '../../core/db';
+import {
+  isCloudSyncActiveForInvestment,
+  recordInvestmentEntry,
+} from '../../core/db/investmentLedger';
+import type { Asset as InvestmentAsset } from '../../core/investment';
 import { Money } from '../../core/money';
 import { AmountInput } from '../AmountInput';
 import {
@@ -56,6 +61,8 @@ interface ImpulseBrakeModalProps {
     accountId?: number;
     compareSessionId?: number;
     compareItemId?: number;
+    purpose?: 'CONSUMPTION' | 'INVESTMENT';
+    investmentAssetId?: string;
   };
   sessionId?: number | null;
   onSuccess?: (outcome: 'PURCHASED' | 'CANCELLED' | 'STARTED', session: ImpulseSession) => void;
@@ -111,6 +118,14 @@ export function ImpulseBrakeModal({
   // Final Txn Registration Form
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [investmentAssets, setInvestmentAssets] = useState<InvestmentAsset[]>([]);
+  const [purpose, setPurpose] = useState<'CONSUMPTION' | 'INVESTMENT'>(
+    initialData?.purpose ?? 'CONSUMPTION'
+  );
+  const [investmentAssetId, setInvestmentAssetId] = useState<string>(
+    initialData?.investmentAssetId ?? ''
+  );
+  const [investmentQuantity, setInvestmentQuantity] = useState<string>('');
   const [selectedAccountId, setSelectedAccountId] = useState<number>(initialData?.accountId || 0);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number>(initialData?.categoryId || 0);
   const [actionChoice, setActionChoice] = useState<'TXN' | 'GOAL' | 'ONLY_RECORD'>('TXN');
@@ -122,11 +137,12 @@ export function ImpulseBrakeModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Load accounts and categories for possible final purchase
+    // Load accounts, categories and investment assets for possible final purchase
     Promise.all([
-      db.accounts.where('archived').equals(0).toArray(),
+      db.accounts.filter(a => !a.archived).toArray(),
       db.categories.where('kind').equals('EXPENSE').toArray(),
-    ]).then(([accList, catList]) => {
+      db.assets.filter(a => !a.archivedAt).toArray(),
+    ]).then(([accList, catList, assetList]) => {
       setAccounts(accList);
       if (accList.length > 0 && !selectedAccountId) {
         setSelectedAccountId(initialData?.accountId || accList[0].id!);
@@ -135,6 +151,10 @@ export function ImpulseBrakeModal({
       if (catList.length > 0 && !selectedCategoryId) {
         const defaultCat = catList.find(c => c.name.includes('خرید') || c.name.includes('کالا')) || catList[0];
         setSelectedCategoryId(initialData?.categoryId || defaultCat.id!);
+      }
+      setInvestmentAssets(assetList);
+      if (assetList.length > 0 && !investmentAssetId) {
+        setInvestmentAssetId(initialData?.investmentAssetId || assetList[0].id);
       }
     });
 
@@ -146,6 +166,9 @@ export function ImpulseBrakeModal({
           setAmountToman(String(Money.toToman(sess.amount)));
           setStoreName(sess.storeName || '');
           setMotivation(sess.motivation);
+          setPurpose(sess.purpose ?? 'CONSUMPTION');
+          setInvestmentAssetId(sess.investmentAssetId ?? '');
+          setInvestmentQuantity(sess.investmentQuantity ?? '');
           setIsTired(sess.isTired);
           setIsStressed(sess.isStressed);
           setIsRushing(sess.isRushing);
@@ -176,6 +199,8 @@ export function ImpulseBrakeModal({
         if (initialData.itemTitle) setItemTitle(initialData.itemTitle);
         if (initialData.amountRial) setAmountToman(String(Money.toToman(initialData.amountRial)));
         if (initialData.storeName) setStoreName(initialData.storeName);
+        if (initialData.purpose) setPurpose(initialData.purpose);
+        if (initialData.investmentAssetId) setInvestmentAssetId(initialData.investmentAssetId);
       }
       setStep('ASSESS');
     }
@@ -247,6 +272,10 @@ export function ImpulseBrakeModal({
       compareItemId: initialData?.compareItemId,
       accountId: selectedAccountId || undefined,
       categoryId: selectedCategoryId || undefined,
+      purpose,
+      investmentAssetId: purpose === 'INVESTMENT' ? investmentAssetId || undefined : undefined,
+      investmentQuantity: purpose === 'INVESTMENT' ? investmentQuantity.trim() || undefined : undefined,
+      outcomeStatus: 'UNKNOWN',
       isTired,
       isStressed,
       isRushing,
@@ -286,14 +315,17 @@ export function ImpulseBrakeModal({
     }
   };
 
-  // Re-evaluation: User decides NOT to buy (Celebration & Money Saved!)
+  // Re-evaluation: User decides NOT to buy (Celebration & Money Saved for consumption; non-profit cancel for investment)
   const handleCancelPurchase = async () => {
     if (!activeSession) return;
     const now = Date.now();
+    const isInvestment = (activeSession.purpose ?? purpose) === 'INVESTMENT';
 
     await db.impulseSessions.update(activeSession.id!, {
       status: 'CANCELLED',
-      savedAmount: activeSession.amount,
+      // Never count cancelled investment purchase as realized financial profit/savings
+      savedAmount: isInvestment ? undefined : activeSession.amount,
+      outcomeStatus: 'CANCELLED_INTENT',
       completedAt: now,
       updatedAt: now,
       postEval: {
@@ -321,9 +353,54 @@ export function ImpulseBrakeModal({
   const handleFinalizePurchase = async () => {
     if (!activeSession) return;
     const now = Date.now();
+    const isInvestment = (activeSession.purpose ?? purpose) === 'INVESTMENT';
     let finalTxnId: number | undefined;
+    let investmentRecordId: string | undefined;
+    let outcomeStatus: ImpulseSession['outcomeStatus'] = 'DECIDED_BUY';
 
-    if (actionChoice === 'TXN' && selectedAccountId && activeSession.amount > 0) {
+    if (isInvestment) {
+      // Investment intent NEVER creates an everyday EXPENSE transaction.
+      const targetAsset = investmentAssets.find(a => a.id === (investmentAssetId || activeSession.investmentAssetId));
+      const qtyStr = (investmentQuantity || activeSession.investmentQuantity || '').trim();
+      const qtyNum = Number(Money.ascii(qtyStr));
+      const syncBlocked = isCloudSyncActiveForInvestment();
+
+      if (actionChoice === 'TXN' && targetAsset && Number.isFinite(qtyNum) && qtyNum > 0 && activeSession.amount > 0) {
+        const res = await recordInvestmentEntry({
+          assetId: targetAsset.id,
+          kind: 'BUY',
+          effectiveAtMs: now,
+          payload: {
+            quantity: Money.ascii(qtyStr),
+            unit: targetAsset.baseUnit,
+            fineness: targetAsset.pricingSpec.referenceFineness,
+            settlementRial: String(activeSession.amount),
+            costKnown: true,
+            note: `خرید آگاهانه پس از مکث (${formatDelayDuration(activeSession.requiredDelayMinutes)})`,
+          },
+          cashLink:
+            selectedAccountId && !syncBlocked
+              ? { mode: 'CREATE_TXN', accountId: selectedAccountId }
+              : { mode: 'NONE' },
+        });
+        investmentRecordId = res.recordId;
+        finalTxnId = res.cashLink?.bankTxnId;
+      } else if (actionChoice === 'TXN' && selectedAccountId && activeSession.amount > 0 && !syncBlocked) {
+        finalTxnId = await db.txns.add({
+          type: 'INVESTMENT_OUT',
+          amount: activeSession.amount,
+          accountId: selectedAccountId,
+          title: `خرید سرمایه‌ای آگاهانه: ${activeSession.itemTitle}`,
+          note: 'ثبت شده از جریان بررسی قصد سرمایه‌گذاری (نیازمند تکمیل مقدار در دفتر دارایی).',
+          occurredAt: now,
+          source: 'MANUAL',
+          createdAt: now,
+        });
+        outcomeStatus = 'UNKNOWN';
+      } else {
+        outcomeStatus = 'UNKNOWN';
+      }
+    } else if (actionChoice === 'TXN' && selectedAccountId && activeSession.amount > 0) {
       finalTxnId = await db.txns.add({
         type: 'EXPENSE',
         amount: activeSession.amount,
@@ -344,10 +421,17 @@ export function ImpulseBrakeModal({
         closed: false,
         createdAt: now,
       });
+    } else {
+      outcomeStatus = 'UNKNOWN';
     }
 
     await db.impulseSessions.update(activeSession.id!, {
       status: 'PURCHASED',
+      purpose: isInvestment ? 'INVESTMENT' : 'CONSUMPTION',
+      investmentAssetId: isInvestment ? investmentAssetId || activeSession.investmentAssetId : undefined,
+      investmentRecordId,
+      investmentQuantity: isInvestment ? investmentQuantity.trim() || activeSession.investmentQuantity : undefined,
+      outcomeStatus,
       finalTxnId,
       completedAt: now,
       updatedAt: now,
@@ -427,6 +511,65 @@ export function ImpulseBrakeModal({
             <div className="space-y-4 animate-fade-in">
               {/* Product Info Inputs */}
               <div className="p-3.5 bg-surface border border-line rounded-2xl space-y-3">
+                <div>
+                  <label className="text-xs font-bold text-white mb-1.5 block">هدف خرید:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPurpose('CONSUMPTION')}
+                      className={`h-9 rounded-xl text-xs font-bold border transition-colors ${
+                        purpose === 'CONSUMPTION'
+                          ? 'bg-amber-400/20 border-amber-400 text-amber-300'
+                          : 'bg-surface2 border-line text-muted'
+                      }`}
+                    >
+                      خرید مصرفی
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPurpose('INVESTMENT')}
+                      className={`h-9 rounded-xl text-xs font-bold border transition-colors ${
+                        purpose === 'INVESTMENT'
+                          ? 'bg-lime/20 border-lime text-lime'
+                          : 'bg-surface2 border-line text-muted'
+                      }`}
+                    >
+                      هدف سرمایه‌گذاری
+                    </button>
+                  </div>
+                </div>
+
+                {purpose === 'INVESTMENT' && investmentAssets.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] font-bold text-white mb-1 block">دارایی سرمایه‌ای:</label>
+                      <select
+                        value={investmentAssetId}
+                        onChange={e => setInvestmentAssetId(e.target.value)}
+                        className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-2"
+                      >
+                        <option value="">انتخاب نشده (ثبت قصد)</option>
+                        {investmentAssets.map(a => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-white mb-1 block">مقدار / وزن:</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={investmentQuantity}
+                        onChange={e => setInvestmentQuantity(Money.ascii(e.target.value))}
+                        placeholder="اختیاری"
+                        className="w-full h-10 rounded-xl bg-surface2 border border-line text-xs text-white px-3 dir-ltr"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <label className="text-xs font-bold text-white mb-1 block">نام کالا یا خرید مورد نظر:</label>
                   <input
@@ -915,10 +1058,21 @@ export function ImpulseBrakeModal({
               </div>
 
               <div className="p-4 rounded-2xl bg-surface border border-emerald-500/30 max-w-xs mx-auto space-y-1">
-                <span className="text-[11px] text-muted block">مبلغ ذخیره شده در حساب شما:</span>
-                <span className="text-xl font-black text-emerald-400">
-                  {Money.toman(activeSession.amount)} تومان
-                </span>
+                {(activeSession.purpose ?? purpose) === 'INVESTMENT' ? (
+                  <>
+                    <span className="text-[11px] text-muted block">تصمیم سرمایه‌گذاری:</span>
+                    <span className="text-xs font-bold text-emerald-300 block">
+                      انصراف ثبت شد (لغو خرید سود مالی محقق‌شده محسوب نمی‌شود)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] text-muted block">مبلغ ذخیره شده در حساب شما:</span>
+                    <span className="text-xl font-black text-emerald-400">
+                      {Money.toman(activeSession.amount)} تومان
+                    </span>
+                  </>
+                )}
               </div>
 
               <button

@@ -49,6 +49,7 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
 
   const selectedAcc = accounts.find(a => a.id === selectedAccId);
   const isDepositToSavings = Boolean(parsed?.type === 'INCOME' && selectedAcc?.isSavings);
+  const isTrustDeposit = Boolean(isDepositToSavings && savingsAllocation.purpose === 'PERSON_HOLD');
 
   const handleParse = (text: string) => {
     setSmsText(text);
@@ -111,29 +112,35 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
       }
     }
 
-    const txnId = await db.txns.add({
-      type: parsed.type,
-      amount: parsed.amount,
-      accountId: selectedAccId,
-      categoryId: selectedCatId || undefined,
-      title: parsed.description || (parsed.type === 'INCOME' ? 'واریز بانکی' : 'برداشت بانکی'),
-      balanceAfter: parsed.balance,
-      occurredAt: parsed.occurredAt,
-      source: 'SMS',
-      createdAt: Date.now(),
-    });
-
-    if (isDepositToSavings) {
-      await saveSavingsDepositAllocations({
+    const now = Date.now();
+    await db.transaction('rw', [db.txns, db.savingsCommitments, db.outbox], async () => {
+      const txnId = await db.txns.add({
+        type: isTrustDeposit ? 'DEBT' : parsed.type,
+        amount: parsed.amount,
         accountId: selectedAccId,
-        txnId,
-        amountRial: parsed.amount,
-        allocation: {
-          ...savingsAllocation,
-          note: parsed.description || undefined,
-        },
+        categoryId: isTrustDeposit ? undefined : (selectedCatId || undefined),
+        title: isTrustDeposit
+          ? (parsed.description || `امانت ${savingsAllocation.personName.trim()}`)
+          : (parsed.description || (parsed.type === 'INCOME' ? 'واریز بانکی' : 'برداشت بانکی')),
+        balanceAfter: parsed.balance,
+        occurredAt: parsed.occurredAt,
+        source: 'SMS',
+        createdAt: now,
       });
-    }
+
+      if (isDepositToSavings) {
+        await saveSavingsDepositAllocations({
+          accountId: selectedAccId,
+          txnId,
+          amountRial: parsed.amount,
+          allocation: {
+            ...savingsAllocation,
+            note: parsed.description || undefined,
+          },
+          now,
+        });
+      }
+    });
 
     onClose();
     if (onSuccess) onSuccess();
@@ -219,7 +226,7 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
             </div>
 
             {/* Account Selector */}
-            <div className="grid grid-cols-2 gap-2 pt-2">
+            <div className={`grid gap-2 pt-2 ${isTrustDeposit ? 'grid-cols-1' : 'grid-cols-2'}`}>
               <div>
                 <label className="text-[10px] text-muted block mb-1">اتصال به حساب</label>
                 <Select
@@ -233,18 +240,20 @@ export function SmartPaste({ isOpen, onClose, onSuccess }: SmartPasteProps) {
                 />
               </div>
 
-              <div>
-                <label className="text-[10px] text-muted block mb-1">دسته‌بندی</label>
-                <Select
-                  size="sm"
-                  value={selectedCatId || undefined}
-                  onChange={(val) => setSelectedCatId(Number(val))}
-                  options={categories
-                    .filter((c): c is Category & { id: number } => c.id != null && c.kind === parsed.type)
-                    .map(c => ({ value: c.id, label: c.name }))}
-                  placeholder="انتخاب دسته‌بندی"
-                />
-              </div>
+              {!isTrustDeposit && (
+                <div>
+                  <label className="text-[10px] text-muted block mb-1">دسته‌بندی</label>
+                  <Select
+                    size="sm"
+                    value={selectedCatId || undefined}
+                    onChange={(val) => setSelectedCatId(Number(val))}
+                    options={categories
+                      .filter((c): c is Category & { id: number } => c.id != null && c.kind === parsed.type)
+                      .map(c => ({ value: c.id, label: c.name }))}
+                    placeholder="انتخاب دسته‌بندی"
+                  />
+                </div>
+              )}
             </div>
 
             {isDepositToSavings && (

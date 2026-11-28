@@ -1,11 +1,19 @@
 import { Money } from './money';
 
+export interface AppChangelog {
+  title?: string;
+  added?: string[];
+  fixed?: string[];
+  improved?: string[];
+}
+
 export interface AppVersionInfo {
   version: string;
   build: number | null;
   commit: string;
   buildTime: string;
   buildId: string;
+  changelog?: AppChangelog | null;
 }
 
 export const APP_VERSION_INFO: AppVersionInfo = __APP_VERSION_INFO__;

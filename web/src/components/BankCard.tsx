@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, Check, Eye, EyeOff, Radio, Edit2, Pencil, Trash2 } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff, Radio, Edit2, Pencil, Trash2, PieChart } from 'lucide-react';
 import { getBankByCode, type Bank } from '../core/banks';
 import { BankKit } from '../core/bankKit';
 import { Money } from '../core/money';
@@ -10,6 +10,7 @@ interface BankCardProps {
   account: AccountWithBalance;
   hidden?: boolean;
   onClick?: () => void;
+  onReport?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
   variant?: 'mini' | 'large' | 'compact';
@@ -57,6 +58,7 @@ export function BankCard({
   account,
   hidden = false,
   onClick,
+  onReport,
   onEdit,
   onDelete,
   variant = 'mini',
@@ -158,8 +160,22 @@ export function BankCard({
             </div>
           </div>
 
-          {/* Action buttons (Edit, Delete) in header */}
+          {/* Action buttons (Report, Edit, Delete) in header */}
           <div className="flex items-center gap-1.5 shrink-0 z-20">
+            {onReport && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onReport();
+                }}
+                aria-label="گزارش ماهانه این کارت"
+                title="گزارش ماهانه این کارت"
+                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 text-lime transition-all active:scale-95 border border-white/10 shadow-sm"
+              >
+                <PieChart size={15} />
+              </button>
+            )}
             {onEdit && (
               <button
                 type="button"

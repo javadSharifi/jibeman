@@ -89,6 +89,8 @@ fun HomeScreen(go: (Route) -> Unit, add: (AddReq) -> Unit) {
                         T(if (app.prefs.name.isBlank()) "سلام" else "سلام، ${app.prefs.name}", 15, 700, maxLines = 1)
                         T(Jalali.longDate(now), 11, color = C.t2)
                     }
+                    CircleBtn(Ic.pieChart) { go(Route.MonthlyReport(0L)) }
+                    Spacer(Modifier.width(8.dp))
                     CircleBtn(if (hide) Ic.eyeOff else Ic.eye) { app.prefs.hideAmounts = !hide }
                     Box(Modifier.padding(start = 8.dp)) {
                         CircleBtn(Ic.msg) { go(Route.SmsReview) }
@@ -243,16 +245,16 @@ fun HomeScreen(go: (Route) -> Unit, add: (AddReq) -> Unit) {
                     T(short(m.income, hide), 20, 800, maxLines = 1)
                     T("تومان", 10.5f, color = Color.White.copy(alpha = 0.85f))
                 }
-                Tile(Modifier.weight(1f).height(112.dp)) {
+                Tile(Modifier.weight(1f).height(112.dp).clip(RoundedCornerShape(20.dp)).clickable { go(Route.MonthlyReport(0L)) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         T("خروجی ${Jalali.MONTHS[j.m - 1]}", 12, color = C.t2, modifier = Modifier.weight(1f))
-                        WhiteDot(Ic.out, 26.dp)
+                        WhiteDot(Ic.pieChart, 26.dp)
                     }
                     Spacer(Modifier.weight(1f))
                     T(short(m.expense, hide), 20, 800, maxLines = 1)
                     val f = if (m.income > 0) m.expense.toFloat() / m.income else 0f
                     Bar(f, Modifier.padding(top = 6.dp))
-                    T(if (m.income > 0) "${Money.fa((f * 100).toInt().toString())}٪ از ورودی" else "تومان", 10.5f, color = C.t2, modifier = Modifier.padding(top = 3.dp))
+                    T(if (m.income > 0) "${Money.fa((f * 100).toInt().toString())}٪ از ورودی" else "مشاهده گزارش", 10.5f, color = C.t2, modifier = Modifier.padding(top = 3.dp))
                 }
             }
         }

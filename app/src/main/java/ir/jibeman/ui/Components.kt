@@ -198,8 +198,8 @@ fun ActionPill(label: String, icon: ImageVector, modifier: Modifier = Modifier, 
 }
 
 @Composable
-fun ActionCircle(label: String, icon: ImageVector, onClick: () -> Unit) = Column(
-    Modifier.width(72.dp).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally,
+fun ActionCircle(label: String, icon: ImageVector, modifier: Modifier = Modifier.width(72.dp), onClick: () -> Unit) = Column(
+    modifier.clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.spacedBy(7.dp),
 ) {
     Box(Modifier.size(52.dp).clip(CircleShape).background(C.primary), contentAlignment = Alignment.Center) { Ico(icon, tint = Color.White) }

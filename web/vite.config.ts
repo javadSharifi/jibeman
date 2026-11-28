@@ -38,6 +38,88 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+interface ChangelogEntry {
+  version?: string;
+  title?: string;
+  added?: string[];
+  fixed?: string[];
+  improved?: string[];
+}
+
+function cleanStringList(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function resolveChangelogFromGit(): Omit<ChangelogEntry, 'version'> | null {
+  const prevTag = runGit(['describe', '--tags', '--abbrev=0', 'HEAD^']);
+  const range = prevTag ? `${prevTag}..HEAD` : '-n 8';
+  const raw = runGit(['log', range, '--no-merges', '--pretty=format:%s']);
+  if (!raw) return null;
+
+  const added: string[] = [];
+  const fixed: string[] = [];
+  const improved: string[] = [];
+
+  for (const line of raw.split('\n')) {
+    const msg = line.trim();
+    if (!msg) continue;
+    const match = msg.match(/^([a-zA-Z]+)(?:\([^)]+\))?:\s*(.+)$/);
+    if (!match) continue;
+    const type = match[1].toLowerCase();
+    const subject = match[2].trim();
+    if (!subject) continue;
+
+    if (type === 'feat') added.push(subject);
+    else if (type === 'fix') fixed.push(subject);
+    else if (type === 'perf' || type === 'refactor') improved.push(subject);
+  }
+
+  if (added.length === 0 && fixed.length === 0 && improved.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(added.length > 0 ? { added } : {}),
+    ...(fixed.length > 0 ? { fixed } : {}),
+    ...(improved.length > 0 ? { improved } : {}),
+  };
+}
+
+function resolveChangelog(version: string): Omit<ChangelogEntry, 'version'> | null {
+  const normalizedVersion = version.replace(/^v/i, '').trim();
+  try {
+    const raw = readFileSync(resolve(__dirname, 'changelog.json'), 'utf8');
+    const entries = JSON.parse(raw) as ChangelogEntry[];
+    if (Array.isArray(entries)) {
+      const matched = entries.find(
+        (entry) => (entry.version ?? '').replace(/^v/i, '').trim() === normalizedVersion
+      );
+      if (matched) {
+        const added = cleanStringList(matched.added);
+        const fixed = cleanStringList(matched.fixed);
+        const improved = cleanStringList(matched.improved);
+        const title = typeof matched.title === 'string' && matched.title.trim() ? matched.title.trim() : undefined;
+        if (added.length > 0 || fixed.length > 0 || improved.length > 0) {
+          return {
+            ...(title ? { title } : {}),
+            ...(added.length > 0 ? { added } : {}),
+            ...(fixed.length > 0 ? { fixed } : {}),
+            ...(improved.length > 0 ? { improved } : {}),
+          };
+        }
+      }
+    }
+  } catch {
+    // changelog.json missing or invalid; fall back to git commits
+  }
+
+  return resolveChangelogFromGit();
+}
+
 function resolveAppVersionInfo() {
   const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as {
     version?: string;
@@ -69,6 +151,7 @@ function resolveAppVersionInfo() {
 
   const buildTime = new Date().toISOString();
   const buildId = `${version}-${build ?? '0'}-${commit || 'local'}-${buildTime}`;
+  const changelog = resolveChangelog(version);
 
   return {
     version,
@@ -76,6 +159,7 @@ function resolveAppVersionInfo() {
     commit,
     buildTime,
     buildId,
+    changelog,
   };
 }
 
@@ -111,6 +195,7 @@ export default defineConfig({
     versionManifestPlugin(),
     VitePWA({
       registerType: 'prompt',
+      injectRegister: false,
       includeAssets: [
         'favicon.svg',
         'favicon.png',

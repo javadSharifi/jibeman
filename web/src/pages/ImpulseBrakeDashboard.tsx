@@ -64,13 +64,32 @@ export function ImpulseBrakeDashboard({ onBack, hidden }: ImpulseBrakeDashboardP
   // Compute insights & statistics (Section 8)
   const stats = useMemo(() => {
     const totalCount = sessions.length;
-    const cancelledSessions = sessions.filter(s => s.status === 'CANCELLED');
-    const cancelledCount = cancelledSessions.length;
+    const consumptionCancelled = sessions.filter(
+      s => s.status === 'CANCELLED' && s.purpose !== 'INVESTMENT'
+    );
+    const cancelledCount = consumptionCancelled.length;
     const purchasedCount = sessions.filter(s => s.status === 'PURCHASED').length;
     const coolingCount = sessions.filter(s => s.status === 'COOLING_OFF' || s.status === 'WAITING_EVAL').length;
 
-    // Total money saved
-    const totalSavedRial = cancelledSessions.reduce((acc, s) => acc + (s.savedAmount || s.amount || 0), 0);
+    // Total money saved (strictly consumption cancellations; cancelled investment intents are NOT financial profit)
+    const totalSavedRial = consumptionCancelled.reduce((acc, s) => acc + (s.savedAmount || s.amount || 0), 0);
+
+    const investmentSessions = sessions.filter(s => s.purpose === 'INVESTMENT');
+    const investmentReport = {
+      total: investmentSessions.length,
+      bought: investmentSessions.filter(
+        s => s.status === 'PURCHASED' && s.outcomeStatus !== 'UNKNOWN'
+      ).length,
+      cancelled: investmentSessions.filter(s => s.status === 'CANCELLED').length,
+      unknown: investmentSessions.filter(
+        s =>
+          s.outcomeStatus === 'UNKNOWN' ||
+          s.status === 'EMERGENCY_BYPASS' ||
+          s.status === 'WAITING_EVAL' ||
+          (s.status === 'PURCHASED' && !s.investmentRecordId && !s.finalTxnId)
+      ).length,
+      cooling: investmentSessions.filter(s => s.status === 'COOLING_OFF').length,
+    };
 
     // Conditions analysis (خستگی، استرس، هیجان، فروشنده...)
     const conditions = {
@@ -95,6 +114,7 @@ export function ImpulseBrakeDashboard({ onBack, hidden }: ImpulseBrakeDashboardP
       purchasedCount,
       coolingCount,
       totalSavedRial,
+      investmentReport,
       conditions,
       motivationCounts,
       successRate: totalCount > 0 ? Math.round((cancelledCount / totalCount) * 100) : 0,
@@ -216,6 +236,36 @@ export function ImpulseBrakeDashboard({ onBack, hidden }: ImpulseBrakeDashboardP
               <span className="text-base font-black text-amber-400">{stats.coolingCount}</span>
             </div>
           </div>
+
+          {stats.investmentReport.total > 0 && (
+            <div className="p-4 rounded-2xl bg-surface border border-line space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white">گزارش تصمیم‌های قصد سرمایه‌گذاری</span>
+                <span className="text-[10px] text-muted">{stats.investmentReport.total} مورد</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5 text-center text-[10px]">
+                <div className="p-2 rounded-xl bg-surface2/60">
+                  <span className="text-muted block">خرید قطعی</span>
+                  <span className="text-xs font-black text-lime">{stats.investmentReport.bought}</span>
+                </div>
+                <div className="p-2 rounded-xl bg-surface2/60">
+                  <span className="text-muted block">انصراف</span>
+                  <span className="text-xs font-black text-sky">{stats.investmentReport.cancelled}</span>
+                </div>
+                <div className="p-2 rounded-xl bg-surface2/60">
+                  <span className="text-muted block">مکث</span>
+                  <span className="text-xs font-black text-amber-400">{stats.investmentReport.cooling}</span>
+                </div>
+                <div className="p-2 rounded-xl bg-surface2/60">
+                  <span className="text-muted block">نامعلوم</span>
+                  <span className="text-xs font-black text-warn">{stats.investmentReport.unknown}</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted leading-relaxed">
+                لغو خرید سرمایه‌گذاری به‌عنوان سود مالی محقق‌شده شمارش نمی‌شود و موارد تکمیل‌نشده در ستون «نامعلوم» گزارش می‌شوند.
+              </p>
+            </div>
+          )}
 
           {/* Start New Brake Button */}
           <button
@@ -366,13 +416,17 @@ export function ImpulseBrakeDashboard({ onBack, hidden }: ImpulseBrakeDashboardP
                         <div className="text-left">
                           <span
                             className={`text-xs font-bold ${
-                              isCancelled ? 'text-emerald-400' : 'text-white/90'
+                              isCancelled && session.purpose !== 'INVESTMENT' ? 'text-emerald-400' : 'text-white/90'
                             }`}
                           >
                             {Money.toman(session.amount)} تومان
                           </span>
                           <span className="text-[9px] text-muted block">
-                            {isCancelled ? 'صرفه‌جویی' : 'مبلغ'}
+                            {session.purpose === 'INVESTMENT'
+                              ? 'سرمایه‌گذاری'
+                              : isCancelled
+                              ? 'صرفه‌جویی'
+                              : 'مبلغ'}
                           </span>
                         </div>
                       )}
@@ -404,9 +458,15 @@ export function ImpulseBrakeDashboard({ onBack, hidden }: ImpulseBrakeDashboardP
                       }`}
                     >
                       {isCancelled
-                        ? 'منصرف شده (ذخیره شد)'
+                        ? session.purpose === 'INVESTMENT'
+                          ? 'انصراف از خرید سرمایه‌ای (غیرسودی)'
+                          : 'منصرف شده (ذخیره شد)'
                         : isPurchased
-                        ? 'خرید آگاهانه'
+                        ? session.outcomeStatus === 'UNKNOWN'
+                          ? 'ثبت ناقص (نتیجه نامعلوم)'
+                          : 'خرید آگاهانه'
+                        : session.status === 'EMERGENCY_BYPASS'
+                        ? `عبور اضطراری (${session.bypassReason || 'نتیجه نامعلوم'})`
                         : 'در حال انتظار'}
                     </span>
                   </div>

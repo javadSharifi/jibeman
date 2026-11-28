@@ -21,6 +21,15 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import ir.jibeman.core.ExpenseDraft
+import ir.jibeman.core.SettlementDraft
+import ir.jibeman.core.SplitConst
+import ir.jibeman.core.SplitEngine
+import ir.jibeman.core.SplitExpenseInput
+import ir.jibeman.core.SplitMemberInput
+import ir.jibeman.core.SplitSettlementInput
+import ir.jibeman.core.SplitShareInput
+import ir.jibeman.core.SplitValidationException
 import kotlinx.coroutines.flow.Flow
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
@@ -257,9 +266,14 @@ data class SplitGroup(
     val title: String,
     val closed: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "NULL") val description: String? = null,
+    @ColumnInfo(defaultValue = "0") val eventDate: Long = createdAt,
+    @ColumnInfo(defaultValue = "'OPEN'") val status: String = if (closed) SplitConst.GROUP_CLOSED else SplitConst.GROUP_OPEN,
+    @ColumnInfo(defaultValue = "NULL") val closedAt: Long? = null,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = createdAt,
 )
 
-/** personId null = me. */
+/** personId null = me (when role == SELF) or inline member (when role == MEMBER). */
 @Entity(
     tableName = "split_member",
     foreignKeys = [
@@ -272,6 +286,12 @@ data class SplitMember(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val groupId: Long,
     val personId: Long?,
+    @ColumnInfo(defaultValue = "''") val displayName: String = "",
+    @ColumnInfo(defaultValue = "'MEMBER'") val role: String = if (personId == null) SplitConst.ROLE_SELF else SplitConst.ROLE_MEMBER,
+    @ColumnInfo(defaultValue = "'ACTIVE'") val status: String = SplitConst.MEMBER_ACTIVE,
+    @ColumnInfo(defaultValue = "0") val joinedAt: Long = 0L,
+    @ColumnInfo(defaultValue = "NULL") val archivedAt: Long? = null,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L,
 )
 
 @Entity(
@@ -289,7 +309,16 @@ data class SplitExpense(
     val amount: Long,
     val payerId: Long,
     val at: Long,
-    val settlement: Boolean = false, // a repayment between members, not a shared cost
+    val settlement: Boolean = false,
+    @ColumnInfo(defaultValue = "'EQUAL'") val splitMethod: String = SplitConst.METHOD_EQUAL,
+    @ColumnInfo(defaultValue = "NULL") val note: String? = null,
+    @ColumnInfo(defaultValue = "'VALID'") val integrityStatus: String = SplitConst.INTEGRITY_VALID,
+    @ColumnInfo(defaultValue = "NULL") val reviewReasons: String? = null,
+    @ColumnInfo(defaultValue = "0") val isDeleted: Boolean = false,
+    @ColumnInfo(defaultValue = "NULL") val deletedAt: Long? = null,
+    @ColumnInfo(defaultValue = "NULL") val legacyPayerId: Long? = null,
+    @ColumnInfo(defaultValue = "0") val createdAt: Long = at,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = at,
 )
 
 @Entity(
@@ -305,6 +334,56 @@ data class SplitShare(
     val expenseId: Long,
     val memberId: Long,
     val amount: Long,
+    @ColumnInfo(defaultValue = "0") val groupId: Long = 0L,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L,
+)
+
+@Entity(
+    tableName = "split_settlement",
+    foreignKeys = [
+        ForeignKey(entity = SplitGroup::class, parentColumns = ["id"], childColumns = ["groupId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = SplitMember::class, parentColumns = ["id"], childColumns = ["fromMemberId"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(entity = SplitMember::class, parentColumns = ["id"], childColumns = ["toMemberId"], onDelete = ForeignKey.RESTRICT),
+    ],
+    indices = [
+        Index("groupId"),
+        Index("fromMemberId"),
+        Index("toMemberId"),
+        Index(value = ["groupId", "idempotencyKey"], unique = true),
+    ],
+)
+data class SplitSettlement(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val groupId: Long,
+    val fromMemberId: Long,
+    val toMemberId: Long,
+    val amount: Long,
+    val status: String = SplitConst.SETTLEMENT_ACTIVE,
+    val idempotencyKey: String,
+    val settledAt: Long,
+    val note: String? = null,
+    val createdAt: Long,
+    val reversedAt: Long? = null,
+    val reversalReason: String? = null,
+    val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "split_audit_log",
+    foreignKeys = [
+        ForeignKey(entity = SplitGroup::class, parentColumns = ["id"], childColumns = ["groupId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("groupId"), Index("at")],
+)
+data class SplitAuditLog(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val groupId: Long,
+    val entityType: String,
+    val entityId: Long,
+    val action: String,
+    val summary: String,
+    val snapshotJson: String? = null,
+    val at: Long,
 )
 
 data class MemberRow(@Embedded val m: SplitMember, val name: String?)
@@ -669,51 +748,389 @@ interface JDao {
 
     // ---- split ----
     @Query(
-        "SELECT g.*, (SELECT COUNT(*) FROM split_member m WHERE m.groupId = g.id) AS members, " +
-            "COALESCE((SELECT SUM(e.amount) FROM split_expense e WHERE e.groupId = g.id AND e.settlement = 0), 0) AS total " +
-            "FROM split_group g ORDER BY g.closed, g.createdAt DESC"
+        "SELECT g.*, (SELECT COUNT(*) FROM split_member m WHERE m.groupId = g.id AND m.status = 'ACTIVE') AS members, " +
+            "COALESCE((SELECT SUM(e.amount) FROM split_expense e WHERE e.groupId = g.id AND e.settlement = 0 AND e.isDeleted = 0 AND e.integrityStatus = 'VALID'), 0) AS total " +
+            "FROM split_group g ORDER BY g.closed, g.eventDate DESC, g.createdAt DESC"
     )
     fun groups(): Flow<List<GroupRow>>
     @Query("SELECT * FROM split_group WHERE id = :id") fun group(id: Long): Flow<SplitGroup?>
-    @Query("SELECT m.*, p.name AS name FROM split_member m LEFT JOIN person p ON p.id = m.personId WHERE m.groupId = :id ORDER BY m.personId IS NOT NULL, m.id")
+    @Query("SELECT * FROM split_group WHERE id = :id") suspend fun groupNow(id: Long): SplitGroup?
+    @Query("SELECT m.*, COALESCE(NULLIF(m.displayName, ''), p.name) AS name FROM split_member m LEFT JOIN person p ON p.id = m.personId WHERE m.groupId = :id ORDER BY m.status = 'ARCHIVED', m.role != 'SELF', m.id")
     fun members(id: Long): Flow<List<MemberRow>>
+    @Query("SELECT * FROM split_member WHERE groupId = :id") suspend fun membersNow(id: Long): List<SplitMember>
     @Query("SELECT * FROM split_expense WHERE groupId = :id ORDER BY at DESC, id DESC") fun expenses(id: Long): Flow<List<SplitExpense>>
+    @Query("SELECT * FROM split_expense WHERE groupId = :id") suspend fun expensesNow(id: Long): List<SplitExpense>
+    @Query("SELECT * FROM split_expense WHERE id = :id") suspend fun splitExpenseNow(id: Long): SplitExpense?
     @Query("SELECT s.* FROM split_share s JOIN split_expense e ON e.id = s.expenseId WHERE e.groupId = :id") fun shares(id: Long): Flow<List<SplitShare>>
+    @Query("SELECT s.* FROM split_share s JOIN split_expense e ON e.id = s.expenseId WHERE e.groupId = :id") suspend fun sharesNow(id: Long): List<SplitShare>
+    @Query("SELECT * FROM split_share WHERE expenseId = :expenseId") suspend fun expenseSharesNow(expenseId: Long): List<SplitShare>
+    @Query("SELECT * FROM split_settlement WHERE groupId = :id ORDER BY settledAt DESC, id DESC") fun settlements(id: Long): Flow<List<SplitSettlement>>
+    @Query("SELECT * FROM split_settlement WHERE groupId = :id") suspend fun settlementsNow(id: Long): List<SplitSettlement>
+    @Query("SELECT * FROM split_settlement WHERE id = :id") suspend fun settlementNow(id: Long): SplitSettlement?
+    @Query("SELECT * FROM split_settlement WHERE groupId = :groupId AND idempotencyKey = :key LIMIT 1")
+    suspend fun settlementByKey(groupId: Long, key: String): SplitSettlement?
+    @Query("SELECT * FROM split_audit_log WHERE groupId = :id ORDER BY at DESC, id DESC") fun auditLogs(id: Long): Flow<List<SplitAuditLog>>
+
     @Insert suspend fun insertGroup(g: SplitGroup): Long
     @Upsert suspend fun upsertGroup(g: SplitGroup)
     @Delete suspend fun deleteGroup(g: SplitGroup)
     @Insert suspend fun insertMember(m: SplitMember): Long
+    @Upsert suspend fun upsertMember(m: SplitMember)
     @Insert suspend fun insertSplitExpense(e: SplitExpense): Long
+    @Upsert suspend fun upsertSplitExpense(e: SplitExpense)
     @Insert suspend fun insertShares(s: List<SplitShare>)
+    @Query("DELETE FROM split_share WHERE expenseId = :expenseId") suspend fun deleteExpenseShares(expenseId: Long)
     @Delete suspend fun deleteSplitExpense(e: SplitExpense)
+    @Insert suspend fun insertSettlement(s: SplitSettlement): Long
+    @Upsert suspend fun upsertSettlement(s: SplitSettlement)
+    @Insert suspend fun insertSplitAuditLog(l: SplitAuditLog): Long
+
+    @Query("SELECT * FROM split_group") suspend fun allSplitGroupsRaw(): List<SplitGroup>
+    @Query("SELECT * FROM split_member") suspend fun allSplitMembersRaw(): List<SplitMember>
+    @Query("SELECT * FROM split_expense") suspend fun allSplitExpensesRaw(): List<SplitExpense>
+    @Query("SELECT * FROM split_share") suspend fun allSplitSharesRaw(): List<SplitShare>
+    @Query("SELECT * FROM split_settlement") suspend fun allSplitSettlementsRaw(): List<SplitSettlement>
 
     @Transaction
-    suspend fun createGroup(title: String, personIds: List<Long>): Long {
-        val id = insertGroup(SplitGroup(title = title))
-        insertMember(SplitMember(groupId = id, personId = null))
-        personIds.distinct().forEach { insertMember(SplitMember(groupId = id, personId = it)) }
+    suspend fun createGroup(title: String, personIds: List<Long>): Long =
+        createGroupV2(title = title, description = null, eventDate = System.currentTimeMillis(), contacts = personIds.map { it to null }, customNames = emptyList())
+
+    @Transaction
+    suspend fun createGroupV2(
+        title: String,
+        description: String?,
+        eventDate: Long,
+        contacts: List<Pair<Long, String?>>,
+        customNames: List<String>,
+    ): Long {
+        val cleanTitle = title.trim().take(80)
+        if (cleanTitle.isEmpty()) throw SplitValidationException("EMPTY_GROUP_TITLE", "نام گروه الزامی است.")
+        val now = System.currentTimeMillis()
+        val id = insertGroup(
+            SplitGroup(
+                title = cleanTitle,
+                closed = false,
+                createdAt = now,
+                description = description?.trim()?.ifEmpty { null },
+                eventDate = eventDate,
+                status = SplitConst.GROUP_OPEN,
+                closedAt = null,
+                updatedAt = now,
+            )
+        )
+        insertMember(
+            SplitMember(
+                groupId = id,
+                personId = null,
+                displayName = "من",
+                role = SplitConst.ROLE_SELF,
+                status = SplitConst.MEMBER_ACTIVE,
+                joinedAt = now,
+                updatedAt = now,
+            )
+        )
+        val seenPersons = HashSet<Long>()
+        for ((pid, label) in contacts) {
+            if (!seenPersons.add(pid)) continue
+            val name = (label ?: personNow(pid)?.name ?: "عضو").trim().take(60)
+            if (name.isEmpty()) continue
+            insertMember(
+                SplitMember(
+                    groupId = id,
+                    personId = pid,
+                    displayName = name,
+                    role = SplitConst.ROLE_MEMBER,
+                    status = SplitConst.MEMBER_ACTIVE,
+                    joinedAt = now,
+                    updatedAt = now,
+                )
+            )
+        }
+        val seenNames = hashSetOf("من")
+        for (raw in customNames) {
+            val name = raw.trim().take(60)
+            if (name.isEmpty() || !seenNames.add(name)) continue
+            insertMember(
+                SplitMember(
+                    groupId = id,
+                    personId = null,
+                    displayName = name,
+                    role = SplitConst.ROLE_MEMBER,
+                    status = SplitConst.MEMBER_ACTIVE,
+                    joinedAt = now,
+                    updatedAt = now,
+                )
+            )
+        }
+        insertSplitAuditLog(
+            SplitAuditLog(
+                groupId = id,
+                entityType = "GROUP",
+                entityId = id,
+                action = "CREATE",
+                summary = "گروه «$cleanTitle» ساخته شد",
+                at = now,
+            )
+        )
         return id
     }
 
-    /** Shared cost. If I paid from an account: my share is an expense, the rest is money lent (DEBT), so reports stay honest. */
+    @Query("SELECT * FROM person WHERE id = :id") suspend fun personNow(id: Long): Person?
+
     @Transaction
-    suspend fun addSplitExpense(e: SplitExpense, shares: Map<Long, Long>, myShare: Long, accountId: Long?, categoryId: Long?) {
-        val id = insertSplitExpense(e)
-        insertShares(shares.map { (m, a) -> SplitShare(expenseId = id, memberId = m, amount = a) })
-        if (accountId != null) {
-            if (myShare > 0) insertTxn(Txn(type = TxType.EXPENSE, amount = myShare, accountId = accountId, categoryId = categoryId, title = e.title, occurredAt = e.at))
-            if (e.amount - myShare > 0) insertTxn(Txn(type = TxType.DEBT, amount = -(e.amount - myShare), accountId = accountId, title = "سهم دیگران · ${e.title}", occurredAt = e.at))
-        }
+    suspend fun updateGroupV2(groupId: Long, title: String, description: String?, eventDate: Long) {
+        val cleanTitle = title.trim().take(80)
+        if (cleanTitle.isEmpty()) throw SplitValidationException("EMPTY_GROUP_TITLE", "نام گروه الزامی است.")
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        val now = System.currentTimeMillis()
+        upsertGroup(g.copy(title = cleanTitle, description = description?.trim()?.ifEmpty { null }, eventDate = eventDate, updatedAt = now))
+        insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "GROUP", entityId = groupId, action = "UPDATE", summary = "مشخصات گروه «$cleanTitle» ویرایش شد", at = now))
     }
 
-    /** Settlement from -> to, recorded as a payment by `from` whose whole share belongs to `to`. */
     @Transaction
-    suspend fun settle(groupId: Long, from: Long, to: Long, amount: Long, at: Long, accountId: Long?, meIsFrom: Boolean, meIsTo: Boolean, title: String) {
-        val id = insertSplitExpense(SplitExpense(groupId = groupId, title = "تسویه", amount = amount, payerId = from, at = at, settlement = true))
-        insertShares(listOf(SplitShare(expenseId = id, memberId = to, amount = amount)))
-        // shortcut: paying my dues counts as expense, receiving counts as repaid loan; exact when settling only own shares
-        if (accountId != null && meIsFrom) insertTxn(Txn(type = TxType.EXPENSE, amount = amount, accountId = accountId, title = title, occurredAt = at))
-        if (accountId != null && meIsTo) insertTxn(Txn(type = TxType.DEBT, amount = amount, accountId = accountId, title = title, occurredAt = at))
+    suspend fun setGroupClosed(groupId: Long, close: Boolean) {
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        val already = g.closed || g.status == SplitConst.GROUP_CLOSED
+        if (already == close) return
+        val now = System.currentTimeMillis()
+        upsertGroup(
+            g.copy(
+                closed = close,
+                status = if (close) SplitConst.GROUP_CLOSED else SplitConst.GROUP_OPEN,
+                closedAt = if (close) now else null,
+                updatedAt = now,
+            )
+        )
+        insertSplitAuditLog(
+            SplitAuditLog(
+                groupId = groupId,
+                entityType = "GROUP",
+                entityId = groupId,
+                action = if (close) "CLOSE" else "REOPEN",
+                summary = if (close) "گروه «${g.title}» بسته شد" else "گروه «${g.title}» دوباره باز شد",
+                at = now,
+            )
+        )
+    }
+
+    @Transaction
+    suspend fun addMemberV2(groupId: Long, personId: Long?, displayName: String): Long {
+        val cleanName = displayName.trim().take(60)
+        if (cleanName.isEmpty()) throw SplitValidationException("EMPTY_MEMBER_NAME", "نام عضو نمی‌تواند خالی باشد.")
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val now = System.currentTimeMillis()
+        val existing = membersNow(groupId)
+        if (personId != null) {
+            val match = existing.firstOrNull { it.personId == personId }
+            if (match != null && match.status == SplitConst.MEMBER_ACTIVE) {
+                throw SplitValidationException("DUPLICATE_MEMBER", "این مخاطب در حال حاضر عضو گروه است.")
+            }
+            if (match != null) {
+                upsertMember(match.copy(status = SplitConst.MEMBER_ACTIVE, archivedAt = null, displayName = cleanName, updatedAt = now))
+                insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "MEMBER", entityId = match.id, action = "RESTORE", summary = "عضویت «$cleanName» فعال شد", at = now))
+                return match.id
+            }
+        } else if (existing.any { it.status == SplitConst.MEMBER_ACTIVE && it.displayName.trim().equals(cleanName, ignoreCase = true) }) {
+            throw SplitValidationException("DUPLICATE_MEMBER", "عضوی با این نام در گروه وجود دارد.")
+        }
+        val memberId = insertMember(
+            SplitMember(
+                groupId = groupId,
+                personId = personId,
+                displayName = cleanName,
+                role = SplitConst.ROLE_MEMBER,
+                status = SplitConst.MEMBER_ACTIVE,
+                joinedAt = now,
+                updatedAt = now,
+            )
+        )
+        insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "MEMBER", entityId = memberId, action = "CREATE", summary = "«$cleanName» به گروه اضافه شد", at = now))
+        return memberId
+    }
+
+    @Transaction
+    suspend fun archiveMemberV2(groupId: Long, memberId: Long) {
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val members = membersNow(groupId)
+        val target = members.firstOrNull { it.id == memberId } ?: throw SplitValidationException("MEMBER_NOT_FOUND", "عضو پیدا نشد.")
+        if (target.role == SplitConst.ROLE_SELF || target.personId == null && target.displayName == "من") {
+            throw SplitValidationException("CANNOT_ARCHIVE_SELF", "خودتان را نمی‌توانید از گروه خارج کنید.")
+        }
+        if (target.status == SplitConst.MEMBER_ARCHIVED) return
+
+        val expenses = expensesNow(groupId)
+        val shares = sharesNow(groupId)
+        val settlements = settlementsNow(groupId)
+        val summary = SplitEngine.calculateGroupSummary(
+            members = members.map { SplitMemberInput(it.id, it.role, it.status) },
+            expenses = expenses.map { SplitExpenseInput(it.id, it.amount, it.payerId, it.splitMethod, it.integrityStatus, it.isDeleted) },
+            shares = shares.map { SplitShareInput(it.expenseId, it.memberId, it.amount) },
+            settlements = settlements.map { SplitSettlementInput(it.id, it.fromMemberId, it.toMemberId, it.amount, it.status) },
+        )
+        if ((summary.balanceByMemberId[memberId]?.netBalance ?: 0L) != 0L) {
+            throw SplitValidationException("MEMBER_HAS_BALANCE", "امکان بایگانی عضو با مانده تسویه‌نشده وجود ندارد.")
+        }
+        val inNeedsReview = expenses.any { e ->
+            !e.isDeleted && e.integrityStatus == SplitConst.INTEGRITY_NEEDS_REVIEW &&
+                (e.payerId == memberId || shares.any { it.expenseId == e.id && it.memberId == memberId })
+        }
+        if (inNeedsReview) {
+            throw SplitValidationException("MEMBER_IN_UNRESOLVED_EXPENSE", "این عضو در هزینه نیازمند بررسی حضور دارد.")
+        }
+        val now = System.currentTimeMillis()
+        upsertMember(target.copy(status = SplitConst.MEMBER_ARCHIVED, archivedAt = now, updatedAt = now))
+        insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "MEMBER", entityId = memberId, action = "ARCHIVE", summary = "«${target.displayName}» بایگانی شد", at = now))
+    }
+
+    @Transaction
+    suspend fun restoreMemberV2(groupId: Long, memberId: Long) {
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val m = membersNow(groupId).firstOrNull { it.id == memberId } ?: throw SplitValidationException("MEMBER_NOT_FOUND", "عضو پیدا نشد.")
+        if (m.status == SplitConst.MEMBER_ACTIVE) return
+        val now = System.currentTimeMillis()
+        upsertMember(m.copy(status = SplitConst.MEMBER_ACTIVE, archivedAt = null, updatedAt = now))
+        insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "MEMBER", entityId = memberId, action = "RESTORE", summary = "«${m.displayName}» دوباره فعال شد", at = now))
+    }
+
+    /** Isolated group expense creation: never touches personal Txn or Debt tables. */
+    @Transaction
+    suspend fun addSplitExpenseV2(groupId: Long, draft: ExpenseDraft): Long {
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val activeIds = membersNow(groupId).filter { it.status == SplitConst.MEMBER_ACTIVE }.map { it.id }.toSet()
+        SplitEngine.validateExpenseDraft(draft, activeIds)
+        val computed = SplitEngine.computeExpenseShares(draft.amountRial, draft.splitMethod, draft.beneficiaryIds, draft.customSharesByMemberId)
+        val now = System.currentTimeMillis()
+        val cleanTitle = draft.title.trim().take(80)
+        val expId = insertSplitExpense(
+            SplitExpense(
+                groupId = groupId,
+                title = cleanTitle,
+                amount = draft.amountRial,
+                payerId = draft.payerId,
+                at = draft.occurredAt,
+                settlement = false,
+                splitMethod = draft.splitMethod,
+                note = draft.note?.trim()?.ifEmpty { null },
+                integrityStatus = SplitConst.INTEGRITY_VALID,
+                isDeleted = false,
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
+        insertShares(computed.map { (mId, amt) -> SplitShare(expenseId = expId, memberId = mId, amount = amt, groupId = groupId, updatedAt = now) })
+        insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "EXPENSE", entityId = expId, action = "CREATE", summary = "هزینه «$cleanTitle» ثبت شد", at = now))
+        return expId
+    }
+
+    @Transaction
+    suspend fun updateSplitExpenseV2(expenseId: Long, draft: ExpenseDraft) {
+        val existing = splitExpenseNow(expenseId) ?: throw SplitValidationException("EXPENSE_NOT_FOUND", "هزینه پیدا نشد.")
+        if (existing.isDeleted) throw SplitValidationException("EXPENSE_NOT_FOUND", "هزینه پیدا نشد.")
+        val g = groupNow(existing.groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+
+        val members = membersNow(existing.groupId)
+        val oldShares = expenseSharesNow(expenseId)
+        val allowedIds = members.filter { it.status == SplitConst.MEMBER_ACTIVE }.map { it.id }.toMutableSet()
+        if (members.any { it.id == existing.payerId }) allowedIds += existing.payerId
+        oldShares.forEach { s -> if (members.any { it.id == s.memberId }) allowedIds += s.memberId }
+
+        SplitEngine.validateExpenseDraft(draft, allowedIds)
+        val computed = SplitEngine.computeExpenseShares(draft.amountRial, draft.splitMethod, draft.beneficiaryIds, draft.customSharesByMemberId)
+        val now = System.currentTimeMillis()
+        val cleanTitle = draft.title.trim().take(80)
+        val wasReview = existing.integrityStatus == SplitConst.INTEGRITY_NEEDS_REVIEW
+
+        deleteExpenseShares(expenseId)
+        insertShares(computed.map { (mId, amt) -> SplitShare(expenseId = expenseId, memberId = mId, amount = amt, groupId = existing.groupId, updatedAt = now) })
+        upsertSplitExpense(
+            existing.copy(
+                title = cleanTitle,
+                amount = draft.amountRial,
+                payerId = draft.payerId,
+                at = draft.occurredAt,
+                settlement = false,
+                splitMethod = draft.splitMethod,
+                note = draft.note?.trim()?.ifEmpty { null },
+                integrityStatus = SplitConst.INTEGRITY_VALID,
+                reviewReasons = null,
+                updatedAt = now,
+            )
+        )
+        insertSplitAuditLog(
+            SplitAuditLog(
+                groupId = existing.groupId,
+                entityType = "EXPENSE",
+                entityId = expenseId,
+                action = if (wasReview) "RESOLVE_REVIEW" else "UPDATE",
+                summary = if (wasReview) "رکورد ناقص «$cleanTitle» تکمیل شد" else "هزینه «$cleanTitle» ویرایش شد",
+                at = now,
+            )
+        )
+    }
+
+    @Transaction
+    suspend fun softDeleteSplitExpense(expenseId: Long) {
+        val existing = splitExpenseNow(expenseId) ?: throw SplitValidationException("EXPENSE_NOT_FOUND", "هزینه پیدا نشد.")
+        if (existing.isDeleted) return
+        val g = groupNow(existing.groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val now = System.currentTimeMillis()
+        upsertSplitExpense(existing.copy(isDeleted = true, deletedAt = now, updatedAt = now))
+        insertSplitAuditLog(SplitAuditLog(groupId = existing.groupId, entityType = "EXPENSE", entityId = expenseId, action = "DELETE", summary = "هزینه «${existing.title}» حذف شد", at = now))
+    }
+
+    @Transaction
+    suspend fun recordSplitSettlement(groupId: Long, draft: SettlementDraft): Long {
+        settlementByKey(groupId, draft.idempotencyKey)?.let { return it.id }
+        val g = groupNow(groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val members = membersNow(groupId)
+        SplitEngine.validateSettlementDraft(draft, members.map { it.id }.toSet())
+        val now = System.currentTimeMillis()
+        val id = insertSettlement(
+            SplitSettlement(
+                groupId = groupId,
+                fromMemberId = draft.fromMemberId,
+                toMemberId = draft.toMemberId,
+                amount = draft.amountRial,
+                status = SplitConst.SETTLEMENT_ACTIVE,
+                idempotencyKey = draft.idempotencyKey,
+                settledAt = draft.settledAt,
+                note = draft.note?.trim()?.ifEmpty { null },
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
+        val fromName = members.firstOrNull { it.id == draft.fromMemberId }?.displayName?.ifEmpty { "عضو" } ?: "عضو"
+        val toName = members.firstOrNull { it.id == draft.toMemberId }?.displayName?.ifEmpty { "عضو" } ?: "عضو"
+        insertSplitAuditLog(SplitAuditLog(groupId = groupId, entityType = "SETTLEMENT", entityId = id, action = "CREATE", summary = "تسویه $fromName به $toName ثبت شد", at = now))
+        return id
+    }
+
+    @Transaction
+    suspend fun reverseSplitSettlement(settlementId: Long, reason: String?) {
+        val existing = settlementNow(settlementId) ?: throw SplitValidationException("SETTLEMENT_NOT_FOUND", "تسویه پیدا نشد.")
+        if (existing.status == SplitConst.SETTLEMENT_REVERSED) return
+        val g = groupNow(existing.groupId) ?: throw SplitValidationException("GROUP_NOT_FOUND", "گروه پیدا نشد.")
+        if (g.closed || g.status == SplitConst.GROUP_CLOSED) throw SplitValidationException("GROUP_CLOSED", "گروه بسته است؛ ابتدا آن را بازگشایی کنید.")
+        val now = System.currentTimeMillis()
+        upsertSettlement(
+            existing.copy(
+                status = SplitConst.SETTLEMENT_REVERSED,
+                reversedAt = now,
+                reversalReason = reason?.trim()?.ifEmpty { null },
+                updatedAt = now,
+            )
+        )
+        val members = membersNow(existing.groupId)
+        val fromName = members.firstOrNull { it.id == existing.fromMemberId }?.displayName?.ifEmpty { "عضو" } ?: "عضو"
+        val toName = members.firstOrNull { it.id == existing.toMemberId }?.displayName?.ifEmpty { "عضو" } ?: "عضو"
+        insertSplitAuditLog(SplitAuditLog(groupId = existing.groupId, entityType = "SETTLEMENT", entityId = settlementId, action = "REVERSE", summary = "تسویه $fromName به $toName برگشت داده شد", at = now))
     }
 
     // ---- savings commitments ----
@@ -846,10 +1263,12 @@ interface JDao {
     entities = [
         Account::class, Card::class, Category::class, Txn::class, RawMessage::class, Rule::class,
         Loan::class, Installment::class, Debt::class, DebtPayment::class,
-        Person::class, Goal::class, GoalEntry::class, SplitGroup::class, SplitMember::class, SplitExpense::class, SplitShare::class,
+        Person::class, Goal::class, GoalEntry::class,
+        SplitGroup::class, SplitMember::class, SplitExpense::class, SplitShare::class,
+        SplitSettlement::class, SplitAuditLog::class,
         SavingsCommitment::class, SavingsPayment::class,
     ],
-    version = 8, exportSchema = true,
+    version = 9, exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3, spec = AppDb.V3::class), AutoMigration(from = 3, to = 4, spec = AppDb.V4::class),
         AutoMigration(from = 4, to = 5),
@@ -918,11 +1337,136 @@ abstract class AppDb : RoomDatabase() {
             }
         }
 
+        private val migration8To9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE split_group ADD COLUMN description TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_group ADD COLUMN eventDate INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE split_group ADD COLUMN status TEXT NOT NULL DEFAULT 'OPEN'")
+                db.execSQL("ALTER TABLE split_group ADD COLUMN closedAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_group ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE split_group SET eventDate = createdAt, " +
+                        "status = CASE WHEN closed = 1 THEN 'CLOSED' ELSE 'OPEN' END, " +
+                        "closedAt = CASE WHEN closed = 1 THEN createdAt ELSE NULL END, " +
+                        "updatedAt = createdAt"
+                )
+
+                db.execSQL("ALTER TABLE split_member ADD COLUMN displayName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE split_member ADD COLUMN role TEXT NOT NULL DEFAULT 'MEMBER'")
+                db.execSQL("ALTER TABLE split_member ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'")
+                db.execSQL("ALTER TABLE split_member ADD COLUMN joinedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE split_member ADD COLUMN archivedAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_member ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE split_member SET " +
+                        "role = CASE WHEN personId IS NULL THEN 'SELF' ELSE 'MEMBER' END, " +
+                        "displayName = CASE WHEN personId IS NULL THEN 'من' ELSE COALESCE((SELECT p.name FROM person p WHERE p.id = split_member.personId), 'عضو سابق') END, " +
+                        "joinedAt = COALESCE((SELECT g.createdAt FROM split_group g WHERE g.id = split_member.groupId), 0), " +
+                        "updatedAt = COALESCE((SELECT g.createdAt FROM split_group g WHERE g.id = split_member.groupId), 0)"
+                )
+
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN splitMethod TEXT NOT NULL DEFAULT 'EQUAL'")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN note TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN integrityStatus TEXT NOT NULL DEFAULT 'VALID'")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN reviewReasons TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN deletedAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN legacyPayerId INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE split_expense ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE split_expense SET createdAt = at, updatedAt = at")
+
+                db.execSQL("ALTER TABLE split_share ADD COLUMN groupId INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE split_share ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE split_share SET " +
+                        "groupId = COALESCE((SELECT e.groupId FROM split_expense e WHERE e.id = split_share.expenseId), 0), " +
+                        "updatedAt = COALESCE((SELECT e.at FROM split_expense e WHERE e.id = split_share.expenseId), 0)"
+                )
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `split_settlement` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `groupId` INTEGER NOT NULL,
+                    `fromMemberId` INTEGER NOT NULL,
+                    `toMemberId` INTEGER NOT NULL,
+                    `amount` INTEGER NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `idempotencyKey` TEXT NOT NULL,
+                    `settledAt` INTEGER NOT NULL,
+                    `note` TEXT,
+                    `createdAt` INTEGER NOT NULL,
+                    `reversedAt` INTEGER,
+                    `reversalReason` TEXT,
+                    `updatedAt` INTEGER NOT NULL,
+                    FOREIGN KEY(`groupId`) REFERENCES `split_group`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`fromMemberId`) REFERENCES `split_member`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                    FOREIGN KEY(`toMemberId`) REFERENCES `split_member`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                )""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_settlement_groupId` ON `split_settlement` (`groupId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_settlement_fromMemberId` ON `split_settlement` (`fromMemberId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_settlement_toMemberId` ON `split_settlement` (`toMemberId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_split_settlement_groupId_idempotencyKey` ON `split_settlement` (`groupId`, `idempotencyKey`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `split_audit_log` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `groupId` INTEGER NOT NULL,
+                    `entityType` TEXT NOT NULL,
+                    `entityId` INTEGER NOT NULL,
+                    `action` TEXT NOT NULL,
+                    `summary` TEXT NOT NULL,
+                    `snapshotJson` TEXT,
+                    `at` INTEGER NOT NULL,
+                    FOREIGN KEY(`groupId`) REFERENCES `split_group`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_audit_log_groupId` ON `split_audit_log` (`groupId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_audit_log_at` ON `split_audit_log` (`at`)")
+
+                // Convert valid legacy settlement=1 expenses into split_settlement rows.
+                db.execSQL(
+                    """INSERT INTO split_settlement(groupId, fromMemberId, toMemberId, amount, status, idempotencyKey, settledAt, note, createdAt, reversedAt, reversalReason, updatedAt)
+                    SELECT e.groupId, e.payerId, s.memberId, e.amount, 'ACTIVE', 'legacy-' || e.id, e.at,
+                        CASE WHEN e.title = 'تسویه' THEN NULL ELSE e.title END, e.at, NULL, NULL, e.at
+                    FROM split_expense e
+                    JOIN split_share s ON s.expenseId = e.id
+                    WHERE e.settlement = 1
+                        AND e.amount > 0 AND (e.amount % 10) = 0
+                        AND EXISTS (SELECT 1 FROM split_member m WHERE m.id = e.payerId AND m.groupId = e.groupId)
+                        AND EXISTS (SELECT 1 FROM split_member m2 WHERE m2.id = s.memberId AND m2.groupId = e.groupId)
+                        AND s.memberId != e.payerId
+                        AND s.amount = e.amount
+                        AND (SELECT COUNT(*) FROM split_share s2 WHERE s2.expenseId = e.id) = 1"""
+                )
+                db.execSQL(
+                    """DELETE FROM split_share WHERE expenseId IN (
+                        SELECT e.id FROM split_expense e WHERE e.settlement = 1
+                            AND EXISTS (SELECT 1 FROM split_settlement st WHERE st.idempotencyKey = 'legacy-' || e.id)
+                    )"""
+                )
+                db.execSQL(
+                    """DELETE FROM split_expense WHERE settlement = 1
+                        AND EXISTS (SELECT 1 FROM split_settlement st WHERE st.idempotencyKey = 'legacy-' || split_expense.id)"""
+                )
+
+                // Flag incomplete/invalid legacy records as NEEDS_REVIEW without inventing shares.
+                db.execSQL(
+                    """UPDATE split_expense
+                    SET integrityStatus = 'NEEDS_REVIEW',
+                        reviewReasons = CASE WHEN settlement = 1 THEN 'INVALID_LEGACY_SETTLEMENT' ELSE 'LEGACY_REVIEW' END,
+                        legacyPayerId = payerId
+                    WHERE settlement = 1
+                        OR amount <= 0 OR (amount % 10) != 0
+                        OR NOT EXISTS (SELECT 1 FROM split_member m WHERE m.id = split_expense.payerId AND m.groupId = split_expense.groupId)
+                        OR (SELECT COUNT(*) FROM split_share s WHERE s.expenseId = split_expense.id) = 0
+                        OR COALESCE((SELECT SUM(s.amount) FROM split_share s WHERE s.expenseId = split_expense.id), 0) != split_expense.amount"""
+                )
+            }
+        }
+
         fun build(ctx: Context, key: ByteArray): AppDb {
             System.loadLibrary("sqlcipher")
             return Room.databaseBuilder(ctx, AppDb::class.java, "jibeman.db")
                 .openHelperFactory(SupportOpenHelperFactory(key))
-                .addMigrations(migration5To6, migration6To7, migration7To8)
+                .addMigrations(migration5To6, migration6To7, migration7To8, migration8To9)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) = seed(db)
                 })

@@ -8,4 +8,10 @@ declare const __APP_VERSION_INFO__: {
   commit: string;
   buildTime: string;
   buildId: string;
+  changelog?: {
+    title?: string;
+    added?: string[];
+    fixed?: string[];
+    improved?: string[];
+  } | null;
 };

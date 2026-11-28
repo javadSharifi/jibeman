@@ -359,8 +359,8 @@ export function SavingsDepositBox({ amountRial, value, onChange }: SavingsDeposi
             className="w-full h-10 rounded-xl bg-sheet border border-line text-white text-xs px-3 focus:outline-none focus:border-warn placeholder:text-muted"
           />
 
-          <p className="text-[10px] text-white/70">
-            این مبلغ در موجودی کارت می‌ماند ولی از «پس‌انداز خالص» شما جدا نگه داشته می‌شود.
+          <p className="text-[10px] text-white/75 leading-relaxed">
+            این مبلغ به موجودی کارت اضافه می‌شود ولی جزو «درآمد ماه» و «پس‌انداز خالص» شما محاسبه نمی‌شود.
           </p>
         </div>
       )}

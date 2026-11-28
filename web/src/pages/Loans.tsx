@@ -1,17 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { AmountInput } from '../components/AmountInput';
-import { Select } from '../components/Select';
+import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Plus, X, Building2, CheckCircle2, Pencil, Calendar, AlertCircle, Clock, ChevronDown, ChevronUp } from 'lucide-react';
-import { db, type Loan, type Installment, type Account } from '../core/db';
+import { Plus, X, Building2, CheckCircle2, Pencil, Trash2 } from 'lucide-react';
+import { LoanForm, LoanAccountSelect } from '../components/LoanForm';
+import { db, type Loan, type Installment } from '../core/db';
 import {
-  createLoanWithSchedule,
-  updateLoanWithSchedule,
+  deleteLoan,
   deleteTxnWithInstallmentLink,
   payLoanInstallment,
   unmarkHistoricalInstallment,
-  generateSchedule,
-  type ScheduleItemInput,
 } from '../core/db/helpers';
 import { Money } from '../core/money';
 import { Jalali } from '../core/jalali';
@@ -25,82 +21,18 @@ interface LoanWithStats extends Loan {
   remainingAmount: number;
 }
 
-interface FormScheduleItem {
-  n: number;
-  dueAt: number;
-  amount: number; // rial
-  isPaid: boolean;
-  paidAt?: number;
-  hasTxn?: boolean;
-}
-
-function LoanAccountSelect({
-  accounts,
-  label,
-  emptyLabel,
-  value,
-  onChange,
-}: {
-  accounts: Account[];
-  label: string;
-  emptyLabel: string;
-  value?: number;
-  onChange: (id: number | undefined) => void;
-}) {
-  const options = [
-    { value: 0, label: emptyLabel },
-    ...accounts
-      .filter((a): a is Account & { id: number } => a.id != null)
-      .map(a => ({
-        value: a.id,
-        label: a.name,
-      })),
-  ];
-
-  return (
-    <div className="block text-[11px] text-muted">
-      <span className="block mb-1">{label}</span>
-      <Select
-        value={accounts.some(a => a.id === value) ? value : 0}
-        onChange={val => onChange(val === 0 ? undefined : Number(val))}
-        options={options}
-        placeholder={emptyLabel}
-      />
-    </div>
-  );
-}
-
 export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingLoan, setEditingLoan] = useState<Loan>();
-  const [loanMode, setLoanMode] = useState<'NEW' | 'ACTIVE'>('NEW');
+  const [loanToDelete, setLoanToDelete] = useState<LoanWithStats | null>(null);
 
   const [paying, setPaying] = useState<Installment>();
   const [undoing, setUndoing] = useState<Installment>();
   const [paymentAccountId, setPaymentAccountId] = useState<number>();
   const [saving, setSaving] = useState(false);
 
-  // Form states
-  const [title, setTitle] = useState('');
-  const [lender, setLender] = useState('');
-  const [principalToman, setPrincipalToman] = useState('');
-  const [installmentToman, setInstallmentToman] = useState('');
-  const [count, setCount] = useState('12');
-  const [paidCountInput, setPaidCountInput] = useState('0');
-  const [receiveAccId, setReceiveAccId] = useState<number | undefined>();
-  const [defaultPayAccId, setDefaultPayAccId] = useState<number>();
-  const [recordDeposit, setRecordDeposit] = useState(false);
-
-  // Jalali date states for form
   const nowJ = Jalali.of(Date.now());
-  const [startYear, setStartYear] = useState(nowJ.y);
-  const [startMonth, setStartMonth] = useState(nowJ.m === 12 ? 1 : nowJ.m + 1);
-  const [startDay, setStartDay] = useState(Math.min(nowJ.d, 28));
-  const [dateTarget, setDateTarget] = useState<'FIRST' | 'NEXT'>('FIRST');
-
-  // Schedule items for form preview and editing
-  const [scheduleItems, setScheduleItems] = useState<FormScheduleItem[]>([]);
-  const [showScheduleList, setShowScheduleList] = useState(false);
+  const [curMonthStart, curMonthEnd] = Jalali.monthRange(nowJ.y, nowJ.m);
 
   const { loans, accounts } = useLiveQuery(async () => {
     const [allLoans, allInsts, allAccs] = await Promise.all([
@@ -136,282 +68,14 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
     return { loans: withStats, accounts: allAccs };
   }, [], { loans: [], accounts: [] });
 
-  // Open Add/Edit Modal
   const openAddLoan = () => {
     setEditingLoan(undefined);
-    setLoanMode('NEW');
-    setTitle('');
-    setLender('');
-    setPrincipalToman('');
-    setInstallmentToman('');
-    setCount('12');
-    setPaidCountInput('0');
-    setReceiveAccId(undefined);
-    setDefaultPayAccId(undefined);
-    setRecordDeposit(false);
-    setDateTarget('FIRST');
-
-    const cur = Jalali.of(Date.now());
-    const nextM = cur.m === 12 ? 1 : cur.m + 1;
-    const nextY = cur.m === 12 ? cur.y + 1 : cur.y;
-    setStartYear(nextY);
-    setStartMonth(nextM);
-    setStartDay(Math.min(cur.d, 28));
-
-    setShowScheduleList(false);
     setIsModalOpen(true);
   };
 
-  const openEditLoan = async (loan: Loan) => {
+  const openEditLoan = (loan: Loan) => {
     setEditingLoan(loan);
-    setTitle(loan.title);
-    setLender(loan.lender || '');
-    setPrincipalToman(Money.tomanInput(loan.principal));
-    setInstallmentToman(Money.tomanInput(loan.installment));
-    setCount(String(loan.count));
-    setReceiveAccId(loan.receiveAccountId);
-    setDefaultPayAccId(loan.accountId);
-    setRecordDeposit(false);
-    setDateTarget('FIRST');
-
-    const j = Jalali.of(loan.firstDueAt);
-    setStartYear(j.y);
-    setStartMonth(j.m);
-    setStartDay(j.d);
-
-    // Fetch existing installments to populate schedule
-    const existingInsts = await db.installments.where('loanId').equals(loan.id!).toArray();
-    existingInsts.sort((a, b) => a.n - b.n);
-
-    const paymentIds = existingInsts.flatMap(i => (i.paidTxnId == null ? [] : [i.paidTxnId]));
-    const payments = await db.txns.bulkGet(paymentIds);
-    const existingPayments = new Set(payments.flatMap(txn => (txn?.id == null ? [] : [txn.id])));
-
-    const items: FormScheduleItem[] = existingInsts.map(i => {
-      const hasTxn = i.paidTxnId != null && existingPayments.has(i.paidTxnId);
-      const isPaid = hasTxn || i.paidAt != null;
-      return {
-        n: i.n,
-        dueAt: i.dueAt,
-        amount: i.amount,
-        isPaid,
-        paidAt: i.paidAt,
-        hasTxn,
-      };
-    });
-
-    setScheduleItems(items);
-    setPaidCountInput(String(items.filter(i => i.isPaid).length));
-    setShowScheduleList(false);
     setIsModalOpen(true);
-  };
-
-  // Re-generate schedule items whenever form parameters change (for new loans or when altering count/amount/date)
-  const calculateFirstDueMillis = (): number => {
-    let y = startYear;
-    let m = startMonth;
-    let d = startDay;
-
-    if (dateTarget === 'NEXT') {
-      const pCount = Math.max(0, parseInt(Money.ascii(paidCountInput), 10) || 0);
-      // Next installment is pCount + 1, so first installment was pCount months ago
-      let totalMonths = y * 12 + (m - 1) - pCount;
-      y = Math.floor(totalMonths / 12);
-      m = (totalMonths % 12) + 1;
-    }
-    const maxD = Jalali.monthDays(y, m);
-    return Jalali.millis(y, m, Math.min(d, maxD));
-  };
-
-  // Rebuild schedule whenever inputs change
-  useEffect(() => {
-    if (!isModalOpen) return;
-
-    const installmentRial = Money.parseToman(installmentToman) || 0;
-    const n = parseInt(Money.ascii(count), 10) || 0;
-    if (n < 1 || n > 600) return;
-
-    const firstDueAt = calculateFirstDueMillis();
-    const defaultSchedule = generateSchedule(firstDueAt, n, installmentRial);
-
-    if (!editingLoan) {
-      // Adding new loan
-      const paidN = loanMode === 'ACTIVE' ? Math.min(n, Math.max(0, parseInt(Money.ascii(paidCountInput), 10) || 0)) : 0;
-      setScheduleItems(
-        defaultSchedule.map(item => {
-          const isPaid = item.n <= paidN;
-          return {
-            n: item.n,
-            dueAt: item.dueAt,
-            amount: item.amount,
-            isPaid,
-            paidAt: isPaid ? item.dueAt : undefined,
-          };
-        })
-      );
-    } else {
-      // Editing existing loan: keep already paid installments intact, update unpaid ones
-      setScheduleItems(prev => {
-        const prevPaidMap = new Map<number, FormScheduleItem>();
-        prev.filter(p => p.isPaid).forEach(p => prevPaidMap.set(p.n, p));
-
-        return defaultSchedule.map(item => {
-          const existingPaid = prevPaidMap.get(item.n);
-          if (existingPaid) {
-            return existingPaid;
-          }
-          return {
-            n: item.n,
-            dueAt: item.dueAt,
-            amount: item.amount,
-            isPaid: false,
-          };
-        });
-      });
-    }
-  }, [
-    isModalOpen,
-    editingLoan,
-    loanMode,
-    count,
-    installmentToman,
-    startYear,
-    startMonth,
-    startDay,
-    dateTarget,
-    paidCountInput,
-  ]);
-
-  // Handle quick paid count change
-  const handleQuickPaidCountChange = (val: string) => {
-    const clean = Money.ascii(val);
-    if (!/^\d*$/.test(clean)) return;
-    setPaidCountInput(clean);
-    const pCount = parseInt(clean, 10) || 0;
-
-    setScheduleItems(prev =>
-      prev.map(item => {
-        if (item.hasTxn) return item; // protected
-        const isPaid = item.n <= pCount;
-        return {
-          ...item,
-          isPaid,
-          paidAt: isPaid ? (item.paidAt || item.dueAt) : undefined,
-        };
-      })
-    );
-  };
-
-  // Toggle individual installment paid status
-  const toggleInstallmentPaid = (n: number) => {
-    setScheduleItems(prev =>
-      prev.map(item => {
-        if (item.n !== n) return item;
-        if (item.hasTxn) {
-          alert('این قسط با تراکنش بانکی ثبت شده است و برای لغو آن باید از بخش اقساط پرداخت‌شده اقدام کنید.');
-          return item;
-        }
-        const nextPaid = !item.isPaid;
-        return {
-          ...item,
-          isPaid: nextPaid,
-          paidAt: nextPaid ? (item.paidAt || item.dueAt) : undefined,
-        };
-      })
-    );
-  };
-
-  // Update specific installment amount in schedule
-  const updateInstallmentAmount = (n: number, toman: string) => {
-    const rial = Money.parseToman(toman) || 0;
-    setScheduleItems(prev =>
-      prev.map(item => (item.n === n ? { ...item, amount: rial } : item))
-    );
-  };
-
-  // Summary calculations for preview
-  const todayStart = Jalali.dayStart(Date.now());
-  const totalRepayment = scheduleItems.reduce((sum, i) => sum + i.amount, 0);
-  const paidItems = scheduleItems.filter(i => i.isPaid);
-  const unpaidItems = scheduleItems.filter(i => !i.isPaid);
-  const paidCount = paidItems.length;
-  const paidAmount = paidItems.reduce((sum, i) => sum + i.amount, 0);
-  const remainingCount = unpaidItems.length;
-  const remainingAmount = unpaidItems.reduce((sum, i) => sum + i.amount, 0);
-  const overdueCount = unpaidItems.filter(i => i.dueAt < todayStart).length;
-  const sortedUnpaid = [...unpaidItems].sort((a, b) => a.dueAt - b.dueAt);
-  const nextDue = sortedUnpaid[0];
-
-  const handleSaveLoan = async () => {
-    const principal = Money.parseToman(principalToman) || 0;
-    const installment = Money.parseToman(installmentToman) || 0;
-    const installmentCount = parseInt(Money.ascii(count), 10) || 0;
-
-    if (!title.trim()) {
-      alert('عنوان وام را وارد کنید.');
-      return;
-    }
-    if (installmentCount < 1 || installmentCount > 600) {
-      alert('تعداد اقساط باید بین ۱ تا ۶۰۰ باشد.');
-      return;
-    }
-    if (installment <= 0) {
-      alert('مبلغ هر قسط را مشخص کنید.');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const firstDueAt = calculateFirstDueMillis();
-      const customInstallments: ScheduleItemInput[] = scheduleItems.map(item => ({
-        n: item.n,
-        dueAt: item.dueAt,
-        amount: item.amount,
-        paidAt: item.isPaid ? (item.paidAt || item.dueAt) : undefined,
-      }));
-
-      if (!editingLoan) {
-        // Create new loan
-        await createLoanWithSchedule(
-          {
-            title: title.trim(),
-            lender: lender.trim() || undefined,
-            principal,
-            installment,
-            count: installmentCount,
-            firstDueAt,
-            receiveAccountId: receiveAccId,
-            accountId: defaultPayAccId,
-          },
-          // Only deposit if user explicitly selected fresh loan AND checked the box
-          loanMode === 'NEW' && recordDeposit ? receiveAccId : undefined,
-          customInstallments
-        );
-      } else {
-        // Update existing loan
-        await updateLoanWithSchedule(
-          editingLoan.id!,
-          {
-            title: title.trim(),
-            lender: lender.trim() || undefined,
-            principal,
-            installment,
-            count: installmentCount,
-            firstDueAt,
-            receiveAccountId: receiveAccId,
-            accountId: defaultPayAccId,
-          },
-          customInstallments
-        );
-      }
-
-      setIsModalOpen(false);
-      setEditingLoan(undefined);
-    } catch {
-      alert('ذخیرهٔ وام انجام نشد. لطفاً اطلاعات را بررسی و دوباره تلاش کنید.');
-    } finally {
-      setSaving(false);
-    }
   };
 
   const openPayment = (loan: LoanWithStats) => {
@@ -441,6 +105,23 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
     }
   };
 
+  const handleDeleteLoan = async () => {
+    if (!loanToDelete?.id) return;
+    setSaving(true);
+    try {
+      await deleteLoan(loanToDelete.id);
+      setLoanToDelete(null);
+      if (editingLoan?.id === loanToDelete.id) {
+        setIsModalOpen(false);
+        setEditingLoan(undefined);
+      }
+    } catch {
+      alert('حذف وام انجام نشد. لطفاً دوباره تلاش کنید.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const payment = paying ?? undoing;
 
   return (
@@ -462,6 +143,12 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
       <div className="space-y-4 mt-4">
         {loans.map(loan => {
           const pct = loan.count > 0 ? Math.round((loan.paid.length / loan.count) * 100) : 0;
+          const currentMonthPaid = loan.paid.find(i => i.dueAt >= curMonthStart && i.dueAt < curMonthEnd);
+          const isNextThisMonth = Boolean(
+            loan.nextInstallment &&
+            loan.nextInstallment.dueAt >= curMonthStart &&
+            loan.nextInstallment.dueAt < curMonthEnd
+          );
           return (
             <div key={loan.id} className="p-4 rounded-[24px] bg-surface border border-line space-y-3">
               <div className="flex items-center justify-between">
@@ -474,7 +161,7 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                     <div className="text-[11px] text-muted">{loan.lender || 'بانک / صندوق'}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-white">
                     {loan.paid.length} از {loan.count} قسط
                   </span>
@@ -484,6 +171,13 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                     className="w-8 h-8 rounded-xl bg-white/5 border border-line flex items-center justify-center text-muted hover:text-white"
                   >
                     <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={() => setLoanToDelete(loan)}
+                    aria-label="حذف وام"
+                    className="w-8 h-8 rounded-xl bg-bad/10 border border-bad/25 flex items-center justify-center text-bad hover:bg-bad/20"
+                  >
+                    <Trash2 size={14} />
                   </button>
                 </div>
               </div>
@@ -518,12 +212,28 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                 </div>
               </div>
 
+              {/* Current month paid quick undo */}
+              {currentMonthPaid && (
+                <div className="p-2.5 rounded-2xl bg-ok/10 border border-ok/25 flex items-center justify-between gap-2">
+                  <div className="text-[11px] text-white font-semibold">
+                    قسط این ماه (قسط {Money.fa(String(currentMonthPaid.n))}) پرداخت‌شده ثبت شده
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUndoing(currentMonthPaid)}
+                    className="h-7 px-2.5 rounded-lg bg-warn/20 border border-warn/30 text-warn text-[10.5px] font-bold shrink-0 active:scale-95"
+                  >
+                    هنوز نداده‌ام
+                  </button>
+                </div>
+              )}
+
               {/* Next installment info */}
               {loan.nextInstallment ? (
                 <div className="pt-2 border-t border-line flex items-center justify-between">
                   <div>
                     <span className="text-[10px] text-muted block">
-                      سررسید قسط بعدی ({Money.fa(String(loan.nextInstallment.n))}) · {Jalali.shortDateTime(loan.nextInstallment.dueAt).split('·')[0]}
+                      {isNextThisMonth ? 'قسط این ماه' : 'سررسید قسط بعدی'} ({Money.fa(String(loan.nextInstallment.n))}) · {Jalali.shortDateTime(loan.nextInstallment.dueAt).split('·')[0]}
                     </span>
                     <span className="text-xs font-bold text-white">
                       {hidden ? '•••' : `${Money.toman(loan.nextInstallment.amount)} تومان`}
@@ -606,356 +316,24 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
               </button>
             </div>
 
-            {/* Mode selector (Fresh loan vs Already Active loan) - only for new loans */}
-            {!editingLoan && (
-              <div className="grid grid-cols-2 p-1 bg-surface rounded-2xl border border-line">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoanMode('NEW');
-                    setPaidCountInput('0');
-                  }}
-                  className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                    loanMode === 'NEW' ? 'bg-lime text-onLime shadow-sm' : 'text-muted'
-                  }`}
-                >
-                  وام تازه
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoanMode('ACTIVE');
-                    setRecordDeposit(false);
-                    if (paidCountInput === '0') setPaidCountInput('1');
-                  }}
-                  className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                    loanMode === 'ACTIVE' ? 'bg-lime text-onLime shadow-sm' : 'text-muted'
-                  }`}
-                >
-                  در حال بازپرداخت (قبلی)
-                </button>
-              </div>
-            )}
-
-            {/* Basic inputs */}
-            <div className="space-y-3">
-              <div>
-                <label className="text-[11px] text-muted block mb-1">عنوان وام</label>
-                <input
-                  type="text"
-                  placeholder="مثلاً: وام ازدواج، رسالت، مسکن..."
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] text-muted block mb-1">نام بانک یا وام‌دهنده</label>
-                <input
-                  type="text"
-                  placeholder="مثلاً: بانک ملت"
-                  value={lender}
-                  onChange={e => setLender(e.target.value)}
-                  className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 focus:outline-none focus:border-sky"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="loan-principal" className="text-[11px] text-muted block mb-1">
-                    اصل وام (تومان) {loanMode === 'ACTIVE' && <span className="text-[10px] text-muted/70">(اختیاری)</span>}
-                  </label>
-                  <AmountInput
-                    id="loan-principal"
-                    placeholder="مثلاً: 50,000,000"
-                    value={principalToman}
-                    onChange={setPrincipalToman}
-                    className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="loan-installment" className="text-[11px] text-muted block mb-1">
-                    مبلغ هر قسط (تومان)
-                  </label>
-                  <AmountInput
-                    id="loan-installment"
-                    placeholder="مثلاً: 2,500,000"
-                    value={installmentToman}
-                    onChange={setInstallmentToman}
-                    className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="loan-count" className="text-[11px] text-muted block mb-1">
-                    تعداد کل اقساط (ماه)
-                  </label>
-                  <input
-                    id="loan-count"
-                    type="text"
-                    inputMode="numeric"
-                    dir="ltr"
-                    value={count}
-                    onChange={e => {
-                      const digits = Money.ascii(e.target.value);
-                      if (/^\d*$/.test(digits)) setCount(digits);
-                    }}
-                    className="w-full h-11 rounded-xl bg-surface border border-line text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
-                  />
-                </div>
-
-                {(!editingLoan && loanMode === 'ACTIVE') && (
-                  <div>
-                    <label htmlFor="loan-paid-count" className="text-[11px] text-muted block mb-1">
-                      اقساط پرداخت‌شده قبلی
-                    </label>
-                    <input
-                      id="loan-paid-count"
-                      type="text"
-                      inputMode="numeric"
-                      dir="ltr"
-                      placeholder="مثلاً: 8"
-                      value={paidCountInput}
-                      onChange={e => handleQuickPaidCountChange(e.target.value)}
-                      className="w-full h-11 rounded-xl bg-surface border border-sky/40 text-white text-xs px-3 dir-ltr focus:outline-none focus:border-sky"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Date setup */}
-              <div className="p-3 rounded-2xl bg-surface border border-line space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted font-bold flex items-center gap-1.5">
-                    <Calendar size={13} className="text-sky" />
-                    تاریخ مبنای اقساط
-                  </span>
-                  {loanMode === 'ACTIVE' && (
-                    <div className="flex gap-1 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => setDateTarget('FIRST')}
-                        className={`px-2 py-0.5 rounded-lg ${
-                          dateTarget === 'FIRST' ? 'bg-sky text-black font-bold' : 'text-muted'
-                        }`}
-                      >
-                        سررسید قسط ۱
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDateTarget('NEXT')}
-                        className={`px-2 py-0.5 rounded-lg ${
-                          dateTarget === 'NEXT' ? 'bg-sky text-black font-bold' : 'text-muted'
-                        }`}
-                      >
-                        سررسید قسط بعدی
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <label className="text-[10px] text-muted block mb-1">روز</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={startDay}
-                      onChange={e => setStartDay(Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1)))}
-                      className="w-full h-9 rounded-lg bg-sheet border border-line text-white text-center text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-muted block mb-1">ماه</label>
-                    <Select
-                      size="sm"
-                      value={startMonth}
-                      onChange={val => setStartMonth(Number(val))}
-                      options={Jalali.MONTHS.map((m, idx) => ({ value: idx + 1, label: m }))}
-                      align="center"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-muted block mb-1">سال</label>
-                    <input
-                      type="number"
-                      value={startYear}
-                      onChange={e => setStartYear(parseInt(e.target.value, 10) || nowJ.y)}
-                      className="w-full h-9 rounded-lg bg-sheet border border-line text-white text-center text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Accounts */}
-              <LoanAccountSelect
-                accounts={accounts}
-                label="حساب دریافت وام"
-                emptyLabel="تعیین نشده"
-                value={receiveAccId}
-                onChange={id => {
-                  setReceiveAccId(id);
-                  if (!id) setRecordDeposit(false);
-                }}
-              />
-              <LoanAccountSelect
-                accounts={accounts}
-                label="حساب پیش‌فرض پرداخت اقساط"
-                emptyLabel="حساب دریافت وام در صورت دسترسی"
-                value={defaultPayAccId}
-                onChange={setDefaultPayAccId}
-              />
-
-              {/* Option to record deposit ONLY for fresh new loans */}
-              {!editingLoan && loanMode === 'NEW' && receiveAccId != null && (
-                <label className="flex items-center gap-2 text-xs text-muted cursor-pointer pt-1">
-                  <input
-                    type="checkbox"
-                    checked={recordDeposit}
-                    onChange={e => setRecordDeposit(e.target.checked)}
-                    className="rounded border-line"
-                  />
-                  واریز مبلغ اصل وام به این حساب ثبت شود (به موجودی اضافه گردد)
-                </label>
-              )}
-
-              {/* Live Preview Summary Card */}
-              {scheduleItems.length > 0 && (
-                <div className="p-3.5 rounded-2xl bg-white/5 border border-line space-y-2.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-white border-b border-line/40 pb-1.5">
-                    <span>پیش‌نمایش وضعیت بازپرداخت</span>
-                    <span className="text-[11px] text-sky">
-                      {remainingCount} قسط مانده از {scheduleItems.length}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-[11px]">
-                    <div>
-                      <span className="text-muted block">مجموع بازپرداخت:</span>
-                      <span className="font-bold text-white">{Money.toman(totalRepayment)} تومان</span>
-                    </div>
-                    <div>
-                      <span className="text-muted block">مانده بازپرداخت:</span>
-                      <span className="font-bold text-sky">{Money.toman(remainingAmount)} تومان</span>
-                    </div>
-                    <div>
-                      <span className="text-muted block">پرداخت‌شده ({paidCount} قسط):</span>
-                      <span className="font-bold text-ok">{Money.toman(paidAmount)} تومان</span>
-                    </div>
-                    <div>
-                      <span className="text-muted block">اقساط معوق:</span>
-                      <span className={`font-bold ${overdueCount > 0 ? 'text-bad' : 'text-muted'}`}>
-                        {overdueCount > 0 ? `${Money.fa(String(overdueCount))} قسط معوق` : 'ندارد'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {nextDue && (
-                    <div className="pt-1.5 border-t border-line/40 text-[11px] flex justify-between items-center">
-                      <span className="text-muted">سررسید قسط بعدی ({Money.fa(String(nextDue.n))}):</span>
-                      <span className="font-bold text-white">
-                        {Jalali.shortDateTime(nextDue.dueAt).split('·')[0]}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Collapsible schedule items table to inspect or customize individual installments */}
-              {scheduleItems.length > 0 && (
-                <div className="border border-line rounded-2xl overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setShowScheduleList(prev => !prev)}
-                    className="w-full px-3 py-2.5 bg-surface flex items-center justify-between text-xs text-muted hover:text-white"
-                  >
-                    <span className="font-bold flex items-center gap-1.5">
-                      <Clock size={14} className="text-sky" />
-                      مشاهده و تنظیم دستی جدول اقساط ({scheduleItems.length})
-                    </span>
-                    {showScheduleList ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  </button>
-
-                  {showScheduleList && (
-                    <div className="p-2 space-y-1.5 max-h-56 overflow-y-auto no-scrollbar bg-sheet">
-                      <p className="text-[10px] text-muted pb-1">
-                        می‌توانی وضعیت هر قسط را دستی تغییر دهی یا مبلغ را اصلاح کنی:
-                      </p>
-                      {scheduleItems.map(item => {
-                        const isOverdue = !item.isPaid && item.dueAt < todayStart;
-                        return (
-                          <div
-                            key={item.n}
-                            className={`p-2 rounded-xl border flex items-center justify-between gap-2 text-xs transition-colors ${
-                              item.isPaid
-                                ? 'bg-ok/10 border-ok/30'
-                                : isOverdue
-                                ? 'bg-bad/10 border-bad/30'
-                                : 'bg-surface border-line'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleInstallmentPaid(item.n)}
-                                className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs ${
-                                  item.isPaid
-                                    ? 'bg-ok text-black'
-                                    : isOverdue
-                                    ? 'bg-bad/20 text-bad border border-bad/40'
-                                    : 'bg-white/10 text-muted border border-line'
-                                }`}
-                              >
-                                {item.isPaid ? '✓' : item.n}
-                              </button>
-                              <div>
-                                <div className="font-bold text-white flex items-center gap-1">
-                                  <span>قسط {Money.fa(String(item.n))}</span>
-                                  {item.isPaid ? (
-                                    <span className="text-[9px] text-ok px-1 py-0.2 rounded bg-ok/20">
-                                      پرداخت‌شده
-                                    </span>
-                                  ) : isOverdue ? (
-                                    <span className="text-[9px] text-bad px-1 py-0.2 rounded bg-bad/20">
-                                      معوق
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <div className="text-[10px] text-muted">
-                                  {Jalali.shortDateTime(item.dueAt).split('·')[0]}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1.5">
-                              <AmountInput
-                                value={Money.tomanInput(item.amount)}
-                                onChange={t => updateInstallmentAmount(item.n, t)}
-                                disabled={item.hasTxn}
-                                className="w-24 h-7 text-[11px] rounded-lg bg-surface border border-line text-white text-center px-1"
-                              />
-                              <span className="text-[10px] text-muted">تومان</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <button
-              disabled={saving}
-              onClick={handleSaveLoan}
-              className="w-full h-12 rounded-xl bg-lime text-onLime font-extrabold text-xs flex items-center justify-center shadow-fab active:scale-95 transition-transform disabled:opacity-50"
-            >
-              {editingLoan ? 'ذخیره تغییرات وام' : 'ثبت وام و برنامه اقساط'}
-            </button>
+            <LoanForm
+              editingLoan={editingLoan}
+              accounts={accounts}
+              onSavingChange={setSaving}
+              onDelete={
+                editingLoan
+                  ? () => {
+                      const target = loans.find(l => l.id === editingLoan.id);
+                      setIsModalOpen(false);
+                      if (target) setLoanToDelete(target);
+                    }
+                  : undefined
+              }
+              onSaved={() => {
+                setIsModalOpen(false);
+                setEditingLoan(undefined);
+              }}
+            />
           </div>
         </div>
       )}
@@ -1007,6 +385,49 @@ export function Loans({ onBack, hidden }: { onBack: () => void; hidden: boolean 
                   setUndoing(undefined);
                 }}
                 className="rounded-xl bg-surface px-4 py-3 text-xs text-white"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Delete Loan Confirmation Modal */}
+      {loanToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center safe-dialog bg-black/75 backdrop-blur-sm p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-loan-title"
+            className="w-full max-w-sm rounded-[24px] bg-sheet border border-line p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center gap-2.5 text-bad">
+              <div className="w-9 h-9 rounded-xl bg-bad/15 flex items-center justify-center shrink-0">
+                <Trash2 size={18} />
+              </div>
+              <h2 id="delete-loan-title" className="text-sm font-bold text-white">
+                حذف وام «{loanToDelete.title}»
+              </h2>
+            </div>
+
+            <p className="text-xs text-muted leading-relaxed">
+              با حذف این وام، جدول اقساط و مبالغ ذخیره‌شده برای آن در کارت‌های پس‌انداز پاک می‌شوند. تراکنش‌های ثبت‌شده قبلی در تاریخچه باقی می‌مانند.
+            </p>
+
+            <div className="flex gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleDeleteLoan}
+                className="flex-1 h-10 rounded-xl bg-bad hover:bg-bad/90 text-white text-xs font-bold transition-colors active:scale-95 shadow-sm disabled:opacity-50"
+              >
+                حذف قطعی
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setLoanToDelete(null)}
+                className="flex-1 h-10 rounded-xl bg-surface hover:bg-surface2 border border-line text-white text-xs font-semibold transition-colors active:scale-95"
               >
                 انصراف
               </button>

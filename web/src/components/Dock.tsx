@@ -52,7 +52,7 @@ export function Dock({ activeTab, onTabChange, onAddClick }: DockProps) {
         <div className="relative -top-5 flex flex-col items-center">
           <button
             onClick={onAddClick}
-            aria-label="ثبت تراکنش جدید"
+            aria-label="افزودن تراکنش، بدهی یا وام"
             className="w-14 h-14 rounded-[20px] bg-lime text-onLime flex items-center justify-center shadow-fab border-[5px] border-bg active:scale-95 transition-transform"
           >
             <Plus size={28} strokeWidth={2.8} />

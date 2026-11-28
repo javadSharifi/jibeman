@@ -1,8 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, ChevronRight, ChevronLeft, Trash2, X } from 'lucide-react';
 import { Jalali } from '../core/jalali';
 import { Money } from '../core/money';
-import { deleteTxnWithInstallmentLink, getTxnsWithDetails, type TxnWithDetails } from '../core/db/helpers';
+import {
+  deleteTxnWithInstallmentLink,
+  getActiveInvestmentLinkedTxnIds,
+  getPersonHoldTxnIds,
+  getTxnsWithDetails,
+  type TxnWithDetails,
+} from '../core/db/helpers';
 import { TxnRow } from '../components/TxnRow';
 
 interface TransactionsProps {
@@ -11,7 +18,6 @@ interface TransactionsProps {
 }
 
 export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
-  const [txns, setTxns] = useState<TxnWithDetails[]>([]);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('');
   const [selectedTxn, setSelectedTxn] = useState<TxnWithDetails | null>(null);
@@ -21,21 +27,42 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
   const [year, setYear] = useState(curJ.y);
   const [month, setMonth] = useState(curJ.m);
 
-  const loadTxns = async () => {
-    const [from, to] = Jalali.monthRange(year, month);
-    const data = await getTxnsWithDetails({
-      from,
-      to,
-      accountId: initialAccountId,
-      type: filterType || undefined,
-      search: search || undefined,
-    });
-    setTxns(data);
-  };
-
-  useEffect(() => {
-    loadTxns();
-  }, [year, month, filterType, search, initialAccountId]);
+  const { txns, personHoldTxnIds, investmentLinkedTxnIds } = useLiveQuery(
+    async () => {
+      const [from, to] = Jalali.monthRange(year, month);
+      const [data, holdIds, invLinkedIds] = await Promise.all([
+        getTxnsWithDetails({
+          from,
+          to,
+          accountId: initialAccountId,
+          type: filterType && filterType !== 'INVESTMENT' ? filterType : undefined,
+          search: search || undefined,
+        }),
+        getPersonHoldTxnIds(),
+        getActiveInvestmentLinkedTxnIds(),
+      ]);
+      const filteredData =
+        filterType === 'INVESTMENT'
+          ? data.filter(
+              t =>
+                t.type === 'INVESTMENT_OUT' ||
+                t.type === 'INVESTMENT_IN' ||
+                (t.id != null && invLinkedIds.has(t.id))
+            )
+          : data;
+      return {
+        txns: filteredData,
+        personHoldTxnIds: holdIds,
+        investmentLinkedTxnIds: invLinkedIds,
+      };
+    },
+    [year, month, filterType, search, initialAccountId],
+    {
+      txns: [] as TxnWithDetails[],
+      personHoldTxnIds: new Set<number>(),
+      investmentLinkedTxnIds: new Set<number>(),
+    }
+  );
 
   const prevMonth = () => {
     if (month === 1) {
@@ -59,7 +86,6 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
     if (confirm('آیا از حذف این تراکنش اطمینان دارید؟')) {
       await deleteTxnWithInstallmentLink(id);
       setSelectedTxn(null);
-      loadTxns();
     }
   };
 
@@ -76,8 +102,12 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
       };
     }
     grouped[dayKey].items.push(t);
-    if (t.type === 'INCOME') grouped[dayKey].net += t.amount;
-    else if (t.type === 'EXPENSE') grouped[dayKey].net -= t.amount;
+    const isTrustHold = t.id != null && personHoldTxnIds.has(t.id);
+    const isInvestmentLinked = t.id != null && investmentLinkedTxnIds.has(t.id);
+    if (!isTrustHold && !isInvestmentLinked) {
+      if (t.type === 'INCOME') grouped[dayKey].net += t.amount;
+      else if (t.type === 'EXPENSE') grouped[dayKey].net -= t.amount;
+    }
   }
 
   return (
@@ -119,7 +149,9 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
           { label: 'همه', val: '' },
           { label: 'هزینه‌ها', val: 'EXPENSE' },
           { label: 'درآمدها', val: 'INCOME' },
+          { label: 'سرمایه‌گذاری', val: 'INVESTMENT' },
           { label: 'انتقال‌ها', val: 'TRANSFER' },
+          { label: 'امانت و بدهی', val: 'DEBT' },
         ].map(chip => (
           <button
             key={chip.val}
@@ -154,6 +186,8 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
                       key={t.id}
                       txn={t}
                       hidden={hidden}
+                      isTrustHold={t.id != null && personHoldTxnIds.has(t.id)}
+                      isInvestmentLinked={t.id != null && investmentLinkedTxnIds.has(t.id)}
                       onClick={() => setSelectedTxn(t)}
                     />
                   ))}
@@ -184,10 +218,10 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
 
             <div className="text-center py-2">
               <div className="text-2xl font-black text-white dir-ltr">
-                {Money.toman(selectedTxn.amount)} تومان
+                {Money.toman(Math.abs(selectedTxn.amount))} تومان
               </div>
               <div className="text-xs text-muted mt-1">
-                {Money.amountWords(selectedTxn.amount)}
+                {Money.amountWords(Math.abs(selectedTxn.amount))}
               </div>
             </div>
 
@@ -197,10 +231,30 @@ export function Transactions({ hidden, initialAccountId }: TransactionsProps) {
                 <span className="font-semibold">{selectedTxn.title || 'بدون عنوان'}</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-muted">نوع:</span>
+                <span>
+                  {selectedTxn.type === 'INVESTMENT_OUT'
+                    ? 'خرید سرمایه‌ای (خروج نقد بدون اثر بر هزینهٔ روزمره)'
+                    : selectedTxn.type === 'INVESTMENT_IN'
+                    ? 'فروش سرمایه‌ای (ورود نقد بدون اثر بر درآمد روزمره)'
+                    : selectedTxn.id != null && investmentLinkedTxnIds.has(selectedTxn.id)
+                    ? 'متصل به دفتر سرمایه‌گذاری (خارج از هزینه/درآمد روزمره)'
+                    : selectedTxn.type === 'ADJUST'
+                    ? 'تعدیل موجودی (بدون اثر بر درآمد و هزینه)'
+                    : selectedTxn.type === 'DEBT' || (selectedTxn.id != null && personHoldTxnIds.has(selectedTxn.id))
+                    ? (selectedTxn.amount < 0 ? 'بازگشت امانت / پرداخت بدهی' : 'امانت / بدهی (بدون اثر بر درآمد و هزینه)')
+                    : selectedTxn.type === 'INCOME'
+                      ? 'درآمد'
+                      : selectedTxn.type === 'TRANSFER'
+                        ? 'انتقال وجه'
+                        : 'هزینه'}
+                </span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-muted">حساب:</span>
                 <span>{selectedTxn.accountName}</span>
               </div>
-              {selectedTxn.categoryName && (
+              {selectedTxn.categoryName && selectedTxn.type !== 'DEBT' && !(selectedTxn.id != null && personHoldTxnIds.has(selectedTxn.id)) && (
                 <div className="flex justify-between">
                   <span className="text-muted">دسته‌بندی:</span>
                   <span>{selectedTxn.categoryName}</span>

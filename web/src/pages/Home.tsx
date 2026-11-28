@@ -18,6 +18,7 @@ import {
   AlertCircle,
   Scale,
   ShieldAlert,
+  PieChart,
 } from 'lucide-react';
 import { Jalali } from '../core/jalali';
 import { Money } from '../core/money';
@@ -66,6 +67,7 @@ interface HomeProps {
   onOpenSmartPaste: () => void;
   onNavigateTab: (tab: number) => void;
   onOpenAccountDetail: (id: number) => void;
+  onOpenMonthlyReport: (accountId?: number) => void;
   onNavigateSubRoute?: (route: string) => void;
 }
 
@@ -76,6 +78,7 @@ export function Home({
   onOpenSmartPaste,
   onNavigateTab,
   onOpenAccountDetail,
+  onOpenMonthlyReport,
   onNavigateSubRoute,
 }: HomeProps) {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -83,7 +86,7 @@ export function Home({
   const now = Date.now();
   const currentJ = Jalali.of(now);
 
-  const { accounts, recentTxns, totals, obligations, savingsEarmarkedRial } = useLiveQuery(
+  const { accounts, recentTxns, totals, obligations, savingsEarmarkedRial, savingsPersonHoldRial, savingsLoanReservedRial } = useLiveQuery(
     async () => {
       const [monthStart, monthEnd] = Jalali.monthRange(currentJ.y, currentJ.m);
 
@@ -161,6 +164,8 @@ export function Home({
         recentTxns: txs,
         totals: tots,
         savingsEarmarkedRial: earmarks.totalEarmarked,
+        savingsPersonHoldRial: earmarks.personHoldTotal,
+        savingsLoanReservedRial: earmarks.loanReservedTotal,
         obligations: {
           loanTotal,
           loanReservedTotal,
@@ -178,6 +183,8 @@ export function Home({
       recentTxns: [] as TxnWithDetails[],
       totals: { income: 0, expense: 0 },
       savingsEarmarkedRial: 0,
+      savingsPersonHoldRial: 0,
+      savingsLoanReservedRial: 0,
       obligations: {
         loanTotal: 0,
         loanReservedTotal: 0,
@@ -212,6 +219,16 @@ export function Home({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenMonthlyReport()}
+              title="گزارش ماهانه هزینه‌ها"
+              aria-label="گزارش ماهانه هزینه‌ها"
+              className="w-10 h-10 rounded-[14px] bg-white/10 hover:bg-white/15 border border-white/15 flex items-center justify-center text-white active:scale-95 transition-transform"
+            >
+              <PieChart size={18} className="text-sky" />
+            </button>
+
             <button
               onClick={onOpenSmartPaste}
               title="چسباندن پیامک بانکی"
@@ -266,7 +283,13 @@ export function Home({
               <div className="text-xs font-bold text-white">کل پس‌انداز خالص</div>
               <div className="text-[10px] text-white/60 truncate">
                 {savingsEarmarkedRial > 0
-                  ? `کل کارت‌ها: ${hidden ? '•••' : Money.toman(savingsBalanceRial)} (کسر ${hidden ? '•••' : Money.toman(savingsEarmarkedRial)} وام/امانت)`
+                  ? [
+                      `کل کارت‌ها: ${hidden ? '•••' : Money.toman(savingsBalanceRial)}`,
+                      savingsPersonHoldRial > 0 ? `مال مردم: ${hidden ? '•••' : Money.toman(savingsPersonHoldRial)}` : null,
+                      savingsLoanReservedRial > 0 ? `وام: ${hidden ? '•••' : Money.toman(savingsLoanReservedRial)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
                   : 'تفکیک‌شده از موجودی قابل‌خرج'}
               </div>
             </div>
@@ -612,30 +635,44 @@ export function Home({
               </div>
             </div>
 
-            {/* Navigation buttons to loans and debts */}
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-line/40">
+            {/* Navigation buttons to monthly report, loans and debts */}
+            <div className="space-y-2 pt-2 border-t border-line/40">
               <button
+                type="button"
                 onClick={() => {
                   setIsDetailModalOpen(false);
-                  if (onNavigateSubRoute) onNavigateSubRoute('loans');
-                  else onNavigateTab(3);
+                  onOpenMonthlyReport();
                 }}
-                className="h-10 rounded-xl bg-surface2 border border-line text-xs font-bold text-sky flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
+                className="w-full h-10 rounded-xl bg-lime text-onLime text-xs font-extrabold flex items-center justify-center gap-1.5 active:scale-95 transition-transform shadow-fab"
               >
-                <Building2 size={14} />
-                مدیریت و پرداخت وام‌ها
+                <PieChart size={15} />
+                گزارش دسته‌بندی هزینه‌های ماه
               </button>
-              <button
-                onClick={() => {
-                  setIsDetailModalOpen(false);
-                  if (onNavigateSubRoute) onNavigateSubRoute('debts');
-                  else onNavigateTab(3);
-                }}
-                className="h-10 rounded-xl bg-surface2 border border-line text-xs font-bold text-warn flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
-              >
-                <HandCoins size={14} />
-                مدیریت بدهی‌ها
-              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    setIsDetailModalOpen(false);
+                    if (onNavigateSubRoute) onNavigateSubRoute('loans');
+                    else onNavigateTab(3);
+                  }}
+                  className="h-10 rounded-xl bg-surface2 border border-line text-xs font-bold text-sky flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
+                >
+                  <Building2 size={14} />
+                  مدیریت و پرداخت وام‌ها
+                </button>
+                <button
+                  onClick={() => {
+                    setIsDetailModalOpen(false);
+                    if (onNavigateSubRoute) onNavigateSubRoute('debts');
+                    else onNavigateTab(3);
+                  }}
+                  className="h-10 rounded-xl bg-surface2 border border-line text-xs font-bold text-warn flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
+                >
+                  <HandCoins size={14} />
+                  مدیریت بدهی‌ها
+                </button>
+              </div>
             </div>
           </div>
         </div>

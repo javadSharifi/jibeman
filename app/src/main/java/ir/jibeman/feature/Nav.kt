@@ -25,6 +25,7 @@ sealed interface Route {
     data class PersonDetail(val id: Long) : Route
     data object Splits : Route
     data class SplitDetail(val id: Long) : Route
+    data class MonthlyReport(val accountId: Long = 0) : Route
 }
 
 /** Index in the dock, or -1 for pushed screens. */

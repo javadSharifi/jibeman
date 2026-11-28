@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db, type Account, type Txn, type Category, type Card, type Loan, type Installment, type SavingsCommitment, type SavingsPayment } from './index';
 import { Jalali } from '../jalali';
 import { revealRows } from './protectedRows';
@@ -29,9 +30,9 @@ export async function getAccountsWithBalances(): Promise<AccountWithBalance[]> {
     let balance = a.initialBalance;
     for (const t of txns) {
       if (t.accountId === a.id) {
-        if (t.type === 'INCOME' || t.type === 'ADJUST' || t.type === 'DEBT') {
+        if (t.type === 'INCOME' || t.type === 'ADJUST' || t.type === 'DEBT' || t.type === 'INVESTMENT_IN') {
           balance += t.amount;
-        } else if (t.type === 'EXPENSE' || t.type === 'TRANSFER') {
+        } else if (t.type === 'EXPENSE' || t.type === 'TRANSFER' || t.type === 'INVESTMENT_OUT') {
           balance -= t.amount;
         }
       }
@@ -101,12 +102,48 @@ export async function getTxnsWithDetails(options?: {
   });
 }
 
+export async function getPersonHoldTxnIds(): Promise<Set<number>> {
+  const [commitments, payments] = await Promise.all([
+    db.savingsCommitments.toArray(),
+    db.savingsPayments.toArray(),
+  ]);
+  const holdCommitmentIds = new Set<number>();
+  const txnIds = new Set<number>();
+
+  for (const c of commitments) {
+    if (c.kind === 'PERSON_HOLD') {
+      if (c.id != null) holdCommitmentIds.add(c.id);
+      if (c.txnId != null) txnIds.add(c.txnId);
+    }
+  }
+  for (const p of payments) {
+    if (holdCommitmentIds.has(p.commitmentId) && p.txnId != null) {
+      txnIds.add(p.txnId);
+    }
+  }
+  return txnIds;
+}
+
+export async function getActiveInvestmentLinkedTxnIds(): Promise<Set<number>> {
+  const links = await db.cashLinks.where('status').equals('ACTIVE').toArray();
+  const ids = new Set<number>();
+  for (const link of links) {
+    if (link.bankTxnId != null) ids.add(link.bankTxnId);
+  }
+  return ids;
+}
+
 export async function getMonthTotals(year: number, month: number): Promise<{ income: number; expense: number }> {
   const [start, end] = Jalali.monthRange(year, month);
-  const txns = await db.txns.where('occurredAt').between(start, end, true, false).toArray();
+  const [txns, personHoldTxnIds, investmentLinkedTxnIds] = await Promise.all([
+    db.txns.where('occurredAt').between(start, end, true, false).toArray(),
+    getPersonHoldTxnIds(),
+    getActiveInvestmentLinkedTxnIds(),
+  ]);
   let income = 0;
   let expense = 0;
   for (const t of txns) {
+    if (t.id != null && (personHoldTxnIds.has(t.id) || investmentLinkedTxnIds.has(t.id))) continue;
     if (t.type === 'INCOME') income += t.amount;
     else if (t.type === 'EXPENSE') expense += t.amount;
   }
@@ -211,20 +248,19 @@ export async function updateLoanWithSchedule(
       const payments = await db.txns.bulkGet(paymentIds);
       const existingPayments = new Set(payments.flatMap(txn => txn?.id == null ? [] : [txn.id]));
 
-      const isPaid = (i: Installment) => (i.paidTxnId != null && existingPayments.has(i.paidTxnId)) || i.paidAt != null;
-      const paidInsts = existingInsts.filter(isPaid);
-      const paidNs = new Set(paidInsts.map(i => i.n));
+      const hasValidTxn = (i: Installment) => i.paidTxnId != null && existingPayments.has(i.paidTxnId);
+      const txnPaidNs = new Set(existingInsts.filter(hasValidTxn).map(i => i.n));
 
-      // Delete only unpaid installments
-      const unpaidIds = existingInsts.filter(i => !isPaid(i)).flatMap(i => i.id == null ? [] : [i.id]);
-      if (unpaidIds.length > 0) {
-        await db.installments.bulkDelete(unpaidIds);
+      // Delete all installments not backed by an active payment transaction so
+      // unmarking historical paid installments or updating dates/amounts persists.
+      const editableIds = existingInsts.filter(i => !hasValidTxn(i)).flatMap(i => i.id == null ? [] : [i.id]);
+      if (editableIds.length > 0) {
+        await db.installments.bulkDelete(editableIds);
       }
 
-      // Insert new installments for ns not in paidNs
       const toInsert: Omit<Installment, 'id'>[] = [];
       for (const item of newSchedule) {
-        if (paidNs.has(item.n)) continue;
+        if (txnPaidNs.has(item.n)) continue;
         toInsert.push({
           loanId,
           n: item.n,
@@ -238,6 +274,26 @@ export async function updateLoanWithSchedule(
       }
     }
   });
+}
+
+export async function deleteLoan(loanId: number): Promise<void> {
+  await db.transaction(
+    'rw',
+    [db.loans, db.installments, db.savingsCommitments, db.savingsPayments, db.outbox],
+    async () => {
+      await db.installments.where('loanId').equals(loanId).delete();
+      const reserves = await db.savingsCommitments
+        .filter(c => c.kind === 'LOAN_RESERVE' && c.loanId === loanId)
+        .toArray();
+      for (const r of reserves) {
+        if (r.id != null) {
+          await db.savingsPayments.where('commitmentId').equals(r.id).delete();
+          await db.savingsCommitments.delete(r.id);
+        }
+      }
+      await db.loans.delete(loanId);
+    }
+  );
 }
 
 export async function unmarkHistoricalInstallment(installmentId: number): Promise<void> {
@@ -298,8 +354,20 @@ export async function payLoanInstallment(installmentId: number, accountId: numbe
 }
 
 export async function deleteTxnWithInstallmentLink(txnId: number): Promise<void> {
-  await db.transaction('rw', [db.installments, db.txns, db.savingsCommitments, db.savingsPayments, db.outbox], async () => {
+  await db.transaction('rw', [db.installments, db.txns, db.savingsCommitments, db.savingsPayments, db.cashLinks, db.outbox], async () => {
     await db.installments.where('paidTxnId').equals(txnId).modify({ paidTxnId: undefined });
+
+    // If a CashLink referenced this bank transaction, mark it NEEDS_RELINK so the ledger stays intact
+    const linkedCashLinks = await db.cashLinks.where('bankTxnId').equals(txnId).toArray();
+    for (const link of linkedCashLinks) {
+      if (link.status === 'ACTIVE') {
+        await db.cashLinks.update(link.id, {
+          bankTxnId: undefined,
+          status: 'NEEDS_RELINK',
+          updatedAt: Date.now(),
+        });
+      }
+    }
 
     // If it was a return repayment transaction, rollback paidAmount on the commitments
     const payments = await db.savingsPayments.where('txnId').equals(txnId).toArray();
@@ -574,7 +642,7 @@ export async function saveSavingsDepositAllocations(options: {
   const now = options.now ?? Date.now();
   if (allocation.purpose === 'SAVINGS' || amountRial <= 0) return;
 
-  await db.transaction('rw', [db.savingsCommitments, db.outbox], async () => {
+  const write = async () => {
     if (allocation.purpose === 'PERSON_HOLD') {
       const cleanName = allocation.personName.trim();
       if (!cleanName) return;
@@ -610,7 +678,13 @@ export async function saveSavingsDepositAllocations(options: {
         }))
       );
     }
-  });
+  };
+
+  if (Dexie.currentTransaction) {
+    await write();
+  } else {
+    await db.transaction('rw', [db.savingsCommitments, db.outbox], write);
+  }
 }
 
 export async function releaseSavingsEarmark(options: {
@@ -634,12 +708,13 @@ export async function releaseSavingsEarmark(options: {
     const now = Date.now();
     let txnId: number | undefined;
     if (outgoingTxn) {
+      const isPersonHoldWithdrawal = c.kind === 'PERSON_HOLD' && outgoingTxn.type === 'EXPENSE';
       txnId = await db.txns.add({
-        type: outgoingTxn.type,
-        amount: releaseAmt,
+        type: isPersonHoldWithdrawal ? 'DEBT' : outgoingTxn.type,
+        amount: isPersonHoldWithdrawal ? -releaseAmt : releaseAmt,
         accountId: c.accountId,
         toAccountId: outgoingTxn.type === 'TRANSFER' ? outgoingTxn.toAccountId : undefined,
-        title: outgoingTxn.note || c.note || (c.kind === 'PERSON_HOLD' ? `بازگشت امانت ${c.personName || ''}` : 'برداشت ذخیره وام'),
+        title: outgoingTxn.note || c.note || (c.kind === 'PERSON_HOLD' ? `بازگشت امانت ${c.personName || ''}`.trim() : 'برداشت ذخیره وام'),
         occurredAt: now,
         source: 'MANUAL',
         createdAt: now,
@@ -659,4 +734,113 @@ export async function releaseSavingsEarmark(options: {
       });
     }
   });
+}
+
+export async function computeAccountBalanceInTx(
+  accountId: number,
+  initialBalance: number
+): Promise<{ balance: number; hasTxns: boolean }> {
+  const [fromTxns, toTxns] = await Promise.all([
+    db.txns.where('accountId').equals(accountId).toArray(),
+    db.txns.where('toAccountId').equals(accountId).toArray(),
+  ]);
+  let balance = initialBalance;
+  for (const t of fromTxns) {
+    if (t.type === 'INCOME' || t.type === 'ADJUST' || t.type === 'DEBT' || t.type === 'INVESTMENT_IN') {
+      balance += t.amount;
+    } else if (t.type === 'EXPENSE' || t.type === 'TRANSFER' || t.type === 'INVESTMENT_OUT') {
+      balance -= t.amount;
+    }
+  }
+  for (const t of toTxns) {
+    if (t.type === 'TRANSFER') {
+      balance += t.amount;
+    }
+  }
+  return { balance, hasTxns: fromTxns.length > 0 || toTxns.length > 0 };
+}
+
+export async function syncAccountPersonHoldInTx(options: {
+  accountId: number;
+  targetHoldRial: number;
+  personName?: string;
+  personId?: number;
+  now?: number;
+}): Promise<void> {
+  const { accountId, targetHoldRial, personName, personId } = options;
+  const now = options.now ?? Date.now();
+  const cleanName = personName?.trim() || '';
+  const allRows = await db.savingsCommitments.where('accountId').equals(accountId).toArray();
+  const activeHolds = allRows
+    .filter(c => c.kind === 'PERSON_HOLD')
+    .map(c => ({ ...c, remaining: Math.max(0, c.amount - (c.paidAmount || 0)) }))
+    .filter(c => c.remaining > 0);
+
+  const currentHold = activeHolds.reduce((s, c) => s + c.remaining, 0);
+
+  if (targetHoldRial > currentHold) {
+    const delta = targetHoldRial - currentHold;
+    const match = activeHolds.find(
+      c => c.txnId == null && (c.personName || '').trim() === cleanName
+    );
+    if (match?.id != null) {
+      await db.savingsCommitments.update(match.id, {
+        amount: match.amount + delta,
+        personId: cleanName ? personId : undefined,
+        personName: cleanName || undefined,
+        note: cleanName ? `امانت ${cleanName}` : 'امانت موجودی کارت',
+      });
+    } else {
+      await db.savingsCommitments.add({
+        accountId,
+        amount: delta,
+        paidAmount: 0,
+        kind: 'PERSON_HOLD',
+        personId: cleanName ? personId : undefined,
+        personName: cleanName || undefined,
+        note: cleanName ? `امانت ${cleanName}` : 'امانت موجودی کارت',
+        createdAt: now,
+      });
+    }
+    return;
+  }
+
+  if (targetHoldRial < currentHold) {
+    let reduceBy = currentHold - targetHoldRial;
+    const prioritized = [...activeHolds].sort((a, b) => {
+      const aCardLevel = a.txnId == null ? 0 : 1;
+      const bCardLevel = b.txnId == null ? 0 : 1;
+      if (aCardLevel !== bCardLevel) return aCardLevel - bCardLevel;
+      return b.createdAt - a.createdAt;
+    });
+
+    for (const c of prioritized) {
+      if (reduceBy <= 0 || c.id == null) break;
+      const take = Math.min(reduceBy, c.remaining);
+      if (c.txnId == null && (c.paidAmount || 0) === 0) {
+        if (take >= c.amount) {
+          await db.savingsCommitments.delete(c.id);
+        } else {
+          await db.savingsCommitments.update(c.id, { amount: c.amount - take });
+        }
+      } else {
+        await db.savingsCommitments.update(c.id, {
+          paidAmount: (c.paidAmount || 0) + take,
+        });
+      }
+      reduceBy -= take;
+    }
+    return;
+  }
+
+  if (targetHoldRial > 0 && activeHolds.length === 1 && activeHolds[0].txnId == null && activeHolds[0].id != null) {
+    const existing = activeHolds[0];
+    if ((existing.personName || '').trim() !== cleanName) {
+      await db.savingsCommitments.update(existing.id!, {
+        personId: cleanName ? personId : undefined,
+        personName: cleanName || undefined,
+        note: cleanName ? `امانت ${cleanName}` : 'امانت موجودی کارت',
+      });
+    }
+  }
 }

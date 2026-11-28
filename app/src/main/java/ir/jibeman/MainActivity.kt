@@ -42,6 +42,7 @@ import ir.jibeman.feature.BackupScreen
 import ir.jibeman.feature.CategoriesScreen
 import ir.jibeman.feature.EditAccountScreen
 import ir.jibeman.feature.HomeScreen
+import ir.jibeman.feature.MonthlyReportScreen
 import ir.jibeman.feature.MoreScreen
 import ir.jibeman.feature.QuickAddSheet
 import ir.jibeman.feature.Route
@@ -280,6 +281,7 @@ private fun AppRoot(activity: MainActivity) {
             is Route.PersonDetail -> ir.jibeman.feature.PersonDetailScreen(top.id, ::back, ::go)
             Route.Splits -> ir.jibeman.feature.SplitsScreen(::back, ::go)
             is Route.SplitDetail -> ir.jibeman.feature.SplitDetailScreen(top.id, ::back)
+            is Route.MonthlyReport -> MonthlyReportScreen(top.accountId, ::back, ::go) { sheet = it }
         }
         if (top.tab >= 0) Dock(
             top.tab, modifier = Modifier.align(Alignment.BottomCenter),

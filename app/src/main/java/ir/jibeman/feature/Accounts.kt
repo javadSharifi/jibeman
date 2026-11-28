@@ -111,6 +111,8 @@ fun AccountsScreen(go: (Route) -> Unit) {
                     T("حساب‌ها", 22, 800)
                     T("جمع: ${amount(accounts.sumOf { it.balance }, hide)} تومان", 12, color = C.t2)
                 }
+                CircleBtn(Ic.pieChart, dark = true) { go(Route.MonthlyReport(0L)) }
+                Spacer(Modifier.width(8.dp))
                 CircleBtn(Ic.plus, dark = true) { go(Route.EditAccount(0)) }
             }
         }
@@ -225,11 +227,12 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 18.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                ActionCircle("انتقال", Ic.swap) { add(AddReq(TxType.TRANSFER, accountId = id)) }
-                ActionCircle("گردش حساب", Ic.list) { go(Route.Txns(id)) }
-                ActionCircle("تعدیل موجودی", Ic.scale) { adjust = true }
-                ActionCircle(if (a.type == AccType.BANK) "ویرایش کارت" else "ویرایش", Ic.pen) {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 18.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                ActionCircle("انتقال", Ic.swap, Modifier.weight(1f)) { add(AddReq(TxType.TRANSFER, accountId = id)) }
+                ActionCircle("گردش حساب", Ic.list, Modifier.weight(1f)) { go(Route.Txns(id)) }
+                ActionCircle("گزارش ماه", Ic.pieChart, Modifier.weight(1f)) { go(Route.MonthlyReport(id)) }
+                ActionCircle("تعدیل", Ic.scale, Modifier.weight(1f)) { adjust = true }
+                ActionCircle(if (a.type == AccType.BANK) "ویرایش کارت" else "ویرایش", Ic.pen, Modifier.weight(1f)) {
                     openCardDetails { if (a.type == AccType.BANK) editCardSheet = true else go(Route.EditAccount(id)) }
                 }
             }
@@ -305,11 +308,14 @@ fun AccountDetailScreen(id: Long, back: () -> Unit, go: (Route) -> Unit, add: (A
                 }
             }
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Tile(Modifier.weight(1f)) {
-                    T("خروجی ${Jalali.MONTHS[now.m - 1]}", 12, color = C.t2)
+                Tile(Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).clickable { go(Route.MonthlyReport(id)) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        T("خروجی ${Jalali.MONTHS[now.m - 1]}", 12, color = C.t2, modifier = Modifier.weight(1f))
+                        Ico(Ic.pieChart, 15.dp, C.sky)
+                    }
                     T(short(totals.expense, hide), 19, 800, modifier = Modifier.padding(top = 8.dp))
                     Bar(if (totals.income > 0) totals.expense.toFloat() / totals.income else 0f, Modifier.padding(top = 8.dp))
-                    T("از ورودی ${short(totals.income, hide)}", 10.5f, color = C.t2, modifier = Modifier.padding(top = 4.dp))
+                    T("گزارش دسته‌بندی · ورودی ${short(totals.income, hide)}", 10.5f, color = C.t2, modifier = Modifier.padding(top = 4.dp))
                 }
                 Tile(Modifier.weight(1f)) {
                     T("تراکنش‌های این ماه", 12, color = C.t2)

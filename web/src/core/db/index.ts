@@ -1,5 +1,27 @@
 import Dexie, { type Table } from 'dexie';
-import { hasRawCardData, protectInTransaction } from './protectedRows';
+import { hasRawCardData, protectInTransaction, revealRow } from './protectedRows';
+import type {
+  AlertEventLog as InvestmentAlertEventLog,
+  AlertRule as InvestmentAlertRule,
+  Asset as InvestmentAsset,
+  CashLink as InvestmentCashLink,
+  DcaPlan as InvestmentDcaPlan,
+  DcaStepLink as InvestmentDcaStepLink,
+  LedgerEvent as InvestmentLedgerEvent,
+  Portfolio as InvestmentPortfolio,
+  PriceSnapshot as InvestmentPriceSnapshot,
+  TargetAllocation as InvestmentTargetAllocation,
+} from '../investment/types';
+import type { ConflictDetail } from '../investment/replay';
+
+export interface SyncConflictRecord {
+  id: string;
+  assetId: string;
+  recordId?: string;
+  eventId?: string;
+  conflict: ConflictDetail;
+  detectedAt: number;
+}
 
 export interface Account {
   id?: number;
@@ -37,7 +59,7 @@ export interface Category {
 
 export interface Txn {
   id?: number;
-  type: 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'ADJUST' | 'DEBT';
+  type: 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'ADJUST' | 'DEBT' | 'INVESTMENT_OUT' | 'INVESTMENT_IN';
   amount: number; // rial
   accountId: number;
   toAccountId?: number;
@@ -124,14 +146,25 @@ export interface GoalEntry {
 export interface SplitGroup {
   id?: number;
   title: string;
+  description?: string;
+  eventDate?: number;
+  status?: 'OPEN' | 'CLOSED';
   closed: boolean;
+  closedAt?: number;
   createdAt: number;
+  updatedAt?: number;
 }
 
 export interface SplitMember {
   id?: number;
   groupId: number;
-  personId?: number | null; // null = me
+  personId?: number | null; // null = me (or inline member when role === 'MEMBER')
+  displayName?: string;
+  role?: 'SELF' | 'MEMBER';
+  status?: 'ACTIVE' | 'ARCHIVED';
+  joinedAt?: number;
+  archivedAt?: number;
+  updatedAt?: number;
 }
 
 export interface SplitExpense {
@@ -142,13 +175,51 @@ export interface SplitExpense {
   payerId: number;
   at: number;
   settlement: boolean;
+  splitMethod?: 'EQUAL' | 'CUSTOM';
+  note?: string;
+  integrityStatus?: 'VALID' | 'NEEDS_REVIEW';
+  reviewReasons?: string[];
+  isDeleted?: boolean;
+  deletedAt?: number;
+  legacyPayerId?: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface SplitShare {
   id?: number;
   expenseId: number;
+  groupId?: number;
   memberId: number;
   amount: number;
+  updatedAt?: number;
+}
+
+export interface SplitSettlement {
+  id?: number;
+  groupId: number;
+  fromMemberId: number;
+  toMemberId: number;
+  amount: number;
+  status: 'ACTIVE' | 'REVERSED';
+  idempotencyKey: string;
+  settledAt: number;
+  note?: string;
+  createdAt: number;
+  reversedAt?: number;
+  reversalReason?: string;
+  updatedAt: number;
+}
+
+export interface SplitAuditLog {
+  id?: number;
+  groupId: number;
+  entityType: 'GROUP' | 'MEMBER' | 'EXPENSE' | 'SETTLEMENT';
+  entityId: number;
+  action: string;
+  summary: string;
+  snapshotJson?: string;
+  at: number;
 }
 
 export interface Rule {
@@ -311,8 +382,13 @@ export interface ImpulseSession {
 
   // Outcome
   status: ImpulseSessionStatus;
-  savedAmount?: number; // rial saved if cancelled
+  savedAmount?: number; // rial saved if cancelled (consumption only)
   finalTxnId?: number;
+  purpose?: 'CONSUMPTION' | 'INVESTMENT';
+  investmentAssetId?: string;
+  investmentRecordId?: string;
+  investmentQuantity?: string;
+  outcomeStatus?: 'DECIDED_BUY' | 'CANCELLED_INTENT' | 'UNKNOWN';
   completedAt?: number;
   bypassReason?: string;
   createdAt: number;
@@ -339,10 +415,6 @@ export const SYNC_TABLES = [
   'persons',
   'goals',
   'goalEntries',
-  'splitGroups',
-  'splitMembers',
-  'splitExpenses',
-  'splitShares',
   'rules',
   'savingsCommitments',
   'savingsPayments',
@@ -351,6 +423,15 @@ export const SYNC_TABLES = [
   'compareItems',
   'compareChecks',
   'impulseSessions',
+  'portfolios',
+  'assets',
+  'ledgerEvents',
+  'cashLinks',
+  'priceSnapshots',
+  'dcaPlans',
+  'dcaStepLinks',
+  'alertRules',
+  'targetAllocations',
 ] as const;
 
 export type SyncTableName = (typeof SYNC_TABLES)[number];
@@ -377,6 +458,8 @@ export class JibemanDatabase extends Dexie {
   splitMembers!: Table<SplitMember, number>;
   splitExpenses!: Table<SplitExpense, number>;
   splitShares!: Table<SplitShare, number>;
+  splitSettlements!: Table<SplitSettlement, number>;
+  splitAuditLogs!: Table<SplitAuditLog, number>;
   rules!: Table<Rule, number>;
   savingsCommitments!: Table<SavingsCommitment, number>;
   savingsPayments!: Table<SavingsPayment, number>;
@@ -386,6 +469,17 @@ export class JibemanDatabase extends Dexie {
   compareChecks!: Table<CompareCheck, number>;
   impulseSessions!: Table<ImpulseSession, number>;
   outbox!: Table<Outbox, string>;
+  portfolios!: Table<InvestmentPortfolio, string>;
+  assets!: Table<InvestmentAsset, string>;
+  ledgerEvents!: Table<InvestmentLedgerEvent, string>;
+  cashLinks!: Table<InvestmentCashLink, string>;
+  priceSnapshots!: Table<InvestmentPriceSnapshot, string>;
+  dcaPlans!: Table<InvestmentDcaPlan, string>;
+  dcaStepLinks!: Table<InvestmentDcaStepLink, string>;
+  alertRules!: Table<InvestmentAlertRule, string>;
+  alertEvents!: Table<InvestmentAlertEventLog, string>;
+  targetAllocations!: Table<InvestmentTargetAllocation, string>;
+  syncConflicts!: Table<SyncConflictRecord, string>;
 
   constructor() {
     super('jibeman_pwa_db');
@@ -443,6 +537,264 @@ export class JibemanDatabase extends Dexie {
 
     this.version(6).stores({
       impulseSessions: '++id, status, coolingEndsAt, createdAt, updatedAt',
+    });
+
+    this.version(7).stores({
+      portfolios: 'id, name, createdAt',
+      assets: 'id, portfolioId, kind, instrumentKey, archivedAt',
+      ledgerEvents: 'id, portfolioId, assetId, recordId, parentEventId, operationId, kind, effectiveAtMs, recordedAtMs',
+      cashLinks: 'id, recordId, effectiveEventId, accountId, bankTxnId, origin, status',
+      priceSnapshots: 'id, instrumentKey, quoteSide, observedAtMs, fetchedAtMs, method',
+    });
+
+    this.version(8).stores({
+      splitGroups: '++id, closed, status, eventDate',
+      splitMembers: '++id, groupId, personId, [groupId+status]',
+      splitExpenses: '++id, groupId, payerId, at, [groupId+isDeleted], integrityStatus',
+      splitShares: '++id, expenseId, groupId, memberId, [expenseId+memberId]',
+      splitSettlements: '++id, groupId, status, fromMemberId, toMemberId, settledAt, &[groupId+idempotencyKey]',
+      splitAuditLogs: '++id, groupId, at',
+    }).upgrade(async tx => {
+      // Ensure local-only split tables never remain queued in sync outbox.
+      await tx.table('outbox').where('t').anyOf([
+        'splitGroups',
+        'splitMembers',
+        'splitExpenses',
+        'splitShares',
+      ]).delete();
+
+      const groupsTable = tx.table('splitGroups');
+      const membersTable = tx.table('splitMembers');
+      const expensesTable = tx.table('splitExpenses');
+      const sharesTable = tx.table('splitShares');
+      const settlementsTable = tx.table('splitSettlements');
+      const auditLogsTable = tx.table('splitAuditLogs');
+      const personsTable = tx.table('persons');
+
+      const [groups, members, expenses, shares, rawPersons] = await Promise.all([
+        groupsTable.toArray(),
+        membersTable.toArray(),
+        expensesTable.toArray(),
+        sharesTable.toArray(),
+        personsTable.toArray(),
+      ]);
+
+      const personNameById = new Map<number, string>();
+      for (const p of rawPersons) {
+        if (p?.id == null) continue;
+        let name = typeof p.name === 'string' ? p.name : '';
+        if (!name && typeof p.privateData === 'string') {
+          try {
+            const revealed = await Dexie.waitFor(Dexie.ignoreTransaction(() => revealRow('persons', p)));
+            if (typeof revealed?.name === 'string') name = revealed.name;
+          } catch {
+            // Fallback gracefully if local device key is unavailable during upgrade.
+          }
+        }
+        if (name) personNameById.set(p.id, name);
+      }
+
+      const groupById = new Map<number, SplitGroup>();
+      for (const g of groups as SplitGroup[]) {
+        if (g.id == null) continue;
+        const createdAt = g.createdAt ?? Date.now();
+        const status: 'OPEN' | 'CLOSED' = g.closed ? 'CLOSED' : 'OPEN';
+        const upgradedGroup: SplitGroup = {
+          ...g,
+          eventDate: g.eventDate ?? createdAt,
+          status,
+          closed: status === 'CLOSED',
+          closedAt: status === 'CLOSED' ? (g.closedAt ?? createdAt) : undefined,
+          updatedAt: g.updatedAt ?? createdAt,
+        };
+        groupById.set(g.id, upgradedGroup);
+        await groupsTable.put(upgradedGroup);
+      }
+
+      const memberIdsByGroup = new Map<number, Set<number>>();
+      for (const m of members as SplitMember[]) {
+        if (m.id == null) continue;
+        const group = groupById.get(m.groupId);
+        const joinedAt = m.joinedAt ?? group?.createdAt ?? Date.now();
+        const role: 'SELF' | 'MEMBER' = m.role ?? (m.personId == null ? 'SELF' : 'MEMBER');
+        const resolvedName =
+          m.displayName ||
+          (role === 'SELF'
+            ? 'من'
+            : (m.personId != null ? personNameById.get(m.personId) : undefined) || 'عضو سابق');
+        const upgradedMember: SplitMember = {
+          ...m,
+          displayName: resolvedName,
+          role,
+          status: m.status ?? 'ACTIVE',
+          joinedAt,
+          updatedAt: m.updatedAt ?? joinedAt,
+        };
+        await membersTable.put(upgradedMember);
+        const set = memberIdsByGroup.get(m.groupId) ?? new Set<number>();
+        set.add(m.id);
+        memberIdsByGroup.set(m.groupId, set);
+      }
+
+      const sharesByExpense = new Map<number, SplitShare[]>();
+      for (const s of shares as SplitShare[]) {
+        const list = sharesByExpense.get(s.expenseId) ?? [];
+        list.push(s);
+        sharesByExpense.set(s.expenseId, list);
+      }
+
+      for (const e of expenses as SplitExpense[]) {
+        if (e.id == null) continue;
+        const groupMembers = memberIdsByGroup.get(e.groupId) ?? new Set<number>();
+        const expShares = sharesByExpense.get(e.id) ?? [];
+        const at = e.at ?? Date.now();
+
+        if (e.settlement) {
+          const validLegacySettlement =
+            Number.isSafeInteger(e.amount) &&
+            e.amount > 0 &&
+            e.amount % 10 === 0 &&
+            groupMembers.has(e.payerId) &&
+            expShares.length === 1 &&
+            groupMembers.has(expShares[0].memberId) &&
+            expShares[0].memberId !== e.payerId &&
+            expShares[0].amount === e.amount;
+
+          if (validLegacySettlement) {
+            await settlementsTable.add({
+              groupId: e.groupId,
+              fromMemberId: e.payerId,
+              toMemberId: expShares[0].memberId,
+              amount: e.amount,
+              status: 'ACTIVE',
+              idempotencyKey: `legacy-${e.id}`,
+              settledAt: at,
+              note: e.title && e.title !== 'تسویه' ? e.title : undefined,
+              createdAt: at,
+              updatedAt: at,
+            });
+            for (const s of expShares) {
+              if (s.id != null) await sharesTable.delete(s.id);
+            }
+            await expensesTable.delete(e.id);
+            await auditLogsTable.add({
+              groupId: e.groupId,
+              entityType: 'SETTLEMENT',
+              entityId: e.id,
+              action: 'CREATE',
+              summary: 'تبدیل تسویه قدیمی به رکورد تسویه جدید',
+              at,
+            });
+            continue;
+          }
+
+          await expensesTable.put({
+            ...e,
+            splitMethod: 'CUSTOM',
+            integrityStatus: 'NEEDS_REVIEW',
+            reviewReasons: ['INVALID_LEGACY_SETTLEMENT'],
+            isDeleted: false,
+            legacyPayerId: e.payerId,
+            createdAt: e.createdAt ?? at,
+            updatedAt: e.updatedAt ?? at,
+          });
+          await auditLogsTable.add({
+            groupId: e.groupId,
+            entityType: 'EXPENSE',
+            entityId: e.id,
+            action: 'CREATE',
+            summary: `تسویه قدیمی «${e.title}» نیازمند بررسی دستی است`,
+            at,
+          });
+          continue;
+        }
+
+        // Preserve any existing shares with groupId populated; never fabricate missing shares.
+        for (const s of expShares) {
+          if (s.id != null) {
+            await sharesTable.put({
+              ...s,
+              groupId: e.groupId,
+              updatedAt: s.updatedAt ?? at,
+            });
+          }
+        }
+
+        const reasons: string[] = [];
+        if (!Number.isSafeInteger(e.amount) || e.amount <= 0 || e.amount % 10 !== 0) {
+          reasons.push('INVALID_AMOUNT');
+        }
+        if (!groupMembers.has(e.payerId)) {
+          reasons.push('MISSING_PAYER');
+        }
+        if (expShares.length === 0) {
+          reasons.push('MISSING_SHARES');
+        } else {
+          const invalidShare = expShares.some(
+            (s) =>
+              !groupMembers.has(s.memberId) ||
+              !Number.isSafeInteger(s.amount) ||
+              s.amount < 0 ||
+              s.amount % 10 !== 0,
+          );
+          if (invalidShare) {
+            reasons.push('INVALID_SHARE');
+          } else if (expShares.reduce((acc, s) => acc + s.amount, 0) !== e.amount) {
+            reasons.push('SHARE_SUM_MISMATCH');
+          }
+        }
+
+        if (reasons.length === 0) {
+          const base = expShares[0]?.amount ?? 0;
+          const looksEqual = expShares.every((s) => Math.abs(s.amount - base) <= 10);
+          await expensesTable.put({
+            ...e,
+            splitMethod: e.splitMethod ?? (looksEqual ? 'EQUAL' : 'CUSTOM'),
+            integrityStatus: 'VALID',
+            reviewReasons: undefined,
+            isDeleted: e.isDeleted ?? false,
+            createdAt: e.createdAt ?? at,
+            updatedAt: e.updatedAt ?? at,
+          });
+        } else {
+          await expensesTable.put({
+            ...e,
+            splitMethod: e.splitMethod ?? 'CUSTOM',
+            integrityStatus: 'NEEDS_REVIEW',
+            reviewReasons: reasons,
+            isDeleted: e.isDeleted ?? false,
+            legacyPayerId: e.payerId,
+            createdAt: e.createdAt ?? at,
+            updatedAt: e.updatedAt ?? at,
+          });
+          await auditLogsTable.add({
+            groupId: e.groupId,
+            entityType: 'EXPENSE',
+            entityId: e.id,
+            action: 'CREATE',
+            summary: `هزینه قدیمی «${e.title}» اطلاعات ناقص دارد و نیازمند بررسی است`,
+            at,
+          });
+        }
+      }
+    });
+
+    this.version(9).stores({
+      syncConflicts: 'id, assetId, recordId, detectedAt',
+    });
+
+    this.version(10).stores({
+      dcaPlans: 'id, portfolioId, assetId, status, createdAt',
+      dcaStepLinks: 'id, planId, assetId, stepIndex, updatedAt',
+    });
+
+    this.version(11).stores({
+      alertRules: 'id, portfolioId, scope, assetId, enabled, updatedAt',
+      alertEvents: 'id, ruleId, scope, triggeredAtMs',
+    });
+
+    this.version(12).stores({
+      targetAllocations: 'id, portfolioId, updatedAt',
     });
 
     this.use({

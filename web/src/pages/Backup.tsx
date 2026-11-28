@@ -210,7 +210,7 @@ export function Backup({ onBack }: { onBack: () => void }) {
           )}
         </div>
 
-        {cfg?.version === 2 ? (
+        {cfg?.version === 2 || cfg?.version === 3 ? (
           /* Connected State */
           <div className="mt-4 space-y-4">
             <div className="p-3.5 rounded-2xl bg-surface2/60 border border-line/50 text-xs space-y-2">
@@ -277,7 +277,7 @@ export function Backup({ onBack }: { onBack: () => void }) {
               </button>
             </div>
 
-            {cfg && cfg.version !== 2 && <p className="mb-3 text-xs text-warn">
+            {cfg && cfg.version !== 2 && cfg.version !== 3 && <p className="mb-3 text-xs text-warn">
               برای رمزنگاری و انتقال داده‌های قبلی، یک بار با رمز حساب ابری دوباره وارد شوید.
             </p>}
             <form onSubmit={handleCloudAuth} className="space-y-3">
