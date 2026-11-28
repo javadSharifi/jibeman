@@ -224,7 +224,7 @@ export function Home({
               onClick={() => onOpenMonthlyReport()}
               title="گزارش ماهانه هزینه‌ها"
               aria-label="گزارش ماهانه هزینه‌ها"
-              className="w-10 h-10 rounded-[14px] bg-lime hover:bg-lime/90 flex items-center justify-center text-onLime active:scale-95 transition-transform"
+              className="w-10 h-10 rounded-[14px] bg-white/10 hover:bg-white/15 border border-white/15 flex items-center justify-center text-white active:scale-95 transition-transform"
             >
               <PieChart size={18} />
             </button>
