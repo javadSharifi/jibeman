@@ -21,6 +21,7 @@ import { Rules } from './pages/Rules';
 import { Security } from './pages/Security';
 import { ShoppingCompare } from './pages/ShoppingCompare';
 import { ImpulseBrakeDashboard } from './pages/ImpulseBrakeDashboard';
+import { IphoneBuy } from './pages/IphoneBuy';
 import { Investments } from './pages/Investments';
 import { MonthlyReport } from './pages/MonthlyReport';
 import { ActiveBrakeBanner } from './components/impulse/ActiveBrakeBanner';
@@ -126,6 +127,7 @@ export function App() {
     if (subRoute === 'security') return <Security onBack={() => setSubRoute(null)} />;
     if (subRoute === 'compare') return <ShoppingCompare onBack={() => setSubRoute(null)} hidden={hidden} />;
     if (subRoute === 'impulse') return <ImpulseBrakeDashboard onBack={() => setSubRoute(null)} hidden={hidden} />;
+    if (subRoute === 'iphone') return <IphoneBuy onBack={() => setSubRoute(null)} />;
     if (subRoute === 'investments') return <Investments onBack={() => setSubRoute(null)} hidden={hidden} />;
     if (subRoute === 'report') {
       return (

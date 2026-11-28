@@ -29,6 +29,7 @@ import { pwaManager, type PwaUpdateState } from '../core/pwa';
 import { isLockEnabled } from '../core/security';
 import { getCfg } from '../core/sync';
 import { APP_VERSION, APP_VERSION_INFO, formatVersionFa } from '../core/version';
+import { getActiveIphoneSummary, subscribeIphoneStore } from '../core/iphoneChecklist';
 
 interface MoreProps {
   onNavigate: (route: string) => void;
@@ -62,9 +63,15 @@ export function More({ onNavigate }: MoreProps) {
   const isIos = detectIosDevice();
   const lockEnabled = isLockEnabled();
   const cloudCfg = getCfg();
+  const [iphoneSummary, setIphoneSummary] = useState(() => getActiveIphoneSummary());
 
   useEffect(() => {
     return pwaManager.subscribe(setPwaState);
+  }, []);
+
+  useEffect(() => {
+    setIphoneSummary(getActiveIphoneSummary());
+    return subscribeIphoneStore(() => setIphoneSummary(getActiveIphoneSummary()));
   }, []);
 
   // Live lightweight summary counts so the user sees app state at a glance
@@ -221,6 +228,26 @@ export function More({ onNavigate }: MoreProps) {
           ? `${Money.fa(String(stats.openComparesCount))} باز`
           : undefined,
       badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/25',
+    },
+    {
+      id: 'iphone',
+      label: 'خرید آیفون',
+      desc: 'چک‌لیست و راهنمای تست آیفون کارکرده و بدون کد',
+      icon: Smartphone,
+      iconColor: 'bg-sky/15 text-sky',
+      spanFull: true,
+      badge:
+        iphoneSummary.criticalFailedCount > 0
+          ? `${Money.fa(String(iphoneSummary.criticalFailedCount))} خط قرمز`
+          : iphoneSummary.checkedCount > 0
+            ? `${Money.fa(String(iphoneSummary.checkedCount))}/${Money.fa(String(iphoneSummary.total))}`
+            : 'جدید',
+      badgeClass:
+        iphoneSummary.criticalFailedCount > 0
+          ? 'bg-bad/15 text-bad border-bad/25'
+          : iphoneSummary.checkedCount > 0
+            ? 'bg-sky/15 text-sky border-sky/25'
+            : 'bg-lime/15 text-lime border-lime/25',
     },
   ];
 
@@ -436,27 +463,50 @@ export function More({ onNavigate }: MoreProps) {
         <div className="grid grid-cols-2 gap-2.5">
           {smartTools.map((item) => {
             const Icon = item.icon;
+            const isFull = 'spanFull' in item && Boolean(item.spanFull);
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => onNavigate(item.id)}
-                className="p-3 rounded-[20px] bg-surface hover:bg-surface2 border border-line text-right flex flex-col justify-between gap-2.5 active:scale-[0.97] transition-[transform,background-color] duration-150 ease-out"
+                className={`p-3 rounded-[20px] bg-surface hover:bg-surface2 border border-line text-right flex transition-[transform,background-color] duration-150 ease-out ${
+                  isFull
+                    ? 'col-span-2 items-center justify-between gap-3 active:scale-[0.98]'
+                    : 'flex-col justify-between gap-2.5 active:scale-[0.97]'
+                }`}
               >
-                <div className="flex items-start justify-between w-full gap-1">
+                <div className={isFull ? 'flex items-center gap-3 min-w-0' : 'flex items-start justify-between w-full gap-1'}>
                   <div className={`w-9 h-9 rounded-[13px] flex items-center justify-center shrink-0 ${item.iconColor}`}>
                     <Icon size={19} />
                   </div>
-                  {item.badge && (
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${item.badgeClass}`}>
-                      {item.badge}
-                    </span>
+                  {isFull ? (
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-white truncate">{item.label}</div>
+                      <div className="text-[10px] text-muted truncate mt-0.5">{item.desc}</div>
+                    </div>
+                  ) : (
+                    item.badge && (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${item.badgeClass}`}>
+                        {item.badge}
+                      </span>
+                    )
                   )}
                 </div>
-                <div className="min-w-0 w-full">
-                  <div className="text-xs font-bold text-white truncate">{item.label}</div>
-                  <div className="text-[10px] text-muted truncate mt-0.5">{item.desc}</div>
-                </div>
+                {isFull ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {item.badge && (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${item.badgeClass}`}>
+                        {item.badge}
+                      </span>
+                    )}
+                    <ChevronLeft size={15} className="text-muted/70" />
+                  </div>
+                ) : (
+                  <div className="min-w-0 w-full">
+                    <div className="text-xs font-bold text-white truncate">{item.label}</div>
+                    <div className="text-[10px] text-muted truncate mt-0.5">{item.desc}</div>
+                  </div>
+                )}
               </button>
             );
           })}

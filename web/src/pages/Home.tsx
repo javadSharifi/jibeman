@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Eye,
@@ -19,9 +19,11 @@ import {
   Scale,
   ShieldAlert,
   PieChart,
+  Smartphone,
 } from 'lucide-react';
 import { Jalali } from '../core/jalali';
 import { Money } from '../core/money';
+import { getActiveIphoneSummary, subscribeIphoneStore } from '../core/iphoneChecklist';
 import { db } from '../core/db';
 import {
   getAccountsWithBalances,
@@ -82,6 +84,12 @@ export function Home({
   onNavigateSubRoute,
 }: HomeProps) {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [iphoneSummary, setIphoneSummary] = useState(() => getActiveIphoneSummary());
+
+  useEffect(() => {
+    setIphoneSummary(getActiveIphoneSummary());
+    return subscribeIphoneStore(() => setIphoneSummary(getActiveIphoneSummary()));
+  }, []);
 
   const now = Date.now();
   const currentJ = Jalali.of(now);
@@ -723,6 +731,37 @@ export function Home({
             </div>
           </div>
           <ChevronLeft size={16} className="text-muted" />
+        </div>
+
+        <div
+          onClick={() => (onNavigateSubRoute ? onNavigateSubRoute('iphone') : onNavigateTab(3))}
+          role="button"
+          tabIndex={0}
+          className="p-3.5 rounded-[22px] bg-gradient-to-r from-sky/15 via-surface to-surface border border-sky/20 hover:border-sky/40 cursor-pointer active:scale-[0.98] transition-[transform,border-color] duration-150 ease-out flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-sky/15 text-sky flex items-center justify-center shrink-0">
+              <Smartphone size={20} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white block">خرید آیفون (چک‌لیست تست)</span>
+                {iphoneSummary.checkedCount > 0 ? (
+                  <span className="text-[9px] font-black bg-sky/20 text-sky px-1.5 py-0.5 rounded-full">
+                    {Money.fa(String(iphoneSummary.checkedCount))}/{Money.fa(String(iphoneSummary.total))}
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black bg-lime text-onLime px-1.5 py-0.5 rounded-full">
+                    جدید
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-muted mt-0.5 truncate">
+                تست مرحله‌به‌مرحله آیفون کارکرده و بدون کد همراه با آموزش هر تست
+              </p>
+            </div>
+          </div>
+          <ChevronLeft size={16} className="text-muted shrink-0" />
         </div>
       </div>
 
